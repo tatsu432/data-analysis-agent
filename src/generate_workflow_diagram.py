@@ -23,10 +23,6 @@ if __name__ == "__main__":
     png_path = generate_workflow_diagram(app, "agent_workflow.png", format="png")
     print(f"✓ PNG diagram saved to: {png_path}")
 
-    # Generate Mermaid source code
-    mmd_path = generate_workflow_diagram(app, "agent_workflow.mmd", format="mermaid")
-    print(f"✓ Mermaid source saved to: {mmd_path}")
-
     print(
         "\nDone! The workflow diagram has been generated from the current graph structure."
     )
