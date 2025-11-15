@@ -40,12 +40,12 @@ High-Level Components:
   - retries on errors  
   - summarizes results  
 
-- Execution Tool (“run_covid_analysis”)  
+- Execution Tool (`run_covid_analysis`)  
   - loads the COVID dataset into a predefined dataframe `df`  
   - executes generated Python code safely  
   - returns previews and plots  
 
-- Dataset Tool (“get_dataset_schema”)  
+- Dataset Tool (`get_dataset_schema`)  
   - returns column names  
   - datatypes  
   - sample rows  
