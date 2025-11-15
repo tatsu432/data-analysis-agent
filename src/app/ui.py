@@ -17,7 +17,7 @@ warnings.filterwarnings(
 )
 
 # Add project root to Python path (must be before other imports)
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
@@ -30,7 +30,7 @@ from langchain_core.messages import (  # noqa: E402
     ToolMessage,
 )
 
-from agent.graph import create_agent  # noqa: E402
+from src.agent.graph import create_agent  # noqa: E402
 
 # Load environment variables
 load_dotenv()

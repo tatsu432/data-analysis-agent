@@ -50,3 +50,6 @@ practice*
 
 # Data
 data*
+
+# exception for the agent workflow diagram
+!agent_workflow.png

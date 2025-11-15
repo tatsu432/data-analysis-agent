@@ -14,8 +14,8 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import NotRequired
 
-from agent.prompts import ANALYSIS_PROMPT
-from agent.tools import get_dataset_schema, run_covid_analysis
+from src.agent.prompts import ANALYSIS_PROMPT
+from src.agent.tools import get_dataset_schema, run_covid_analysis
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,7 +77,7 @@ def run_covid_analysis_tool(code: str) -> dict:
         IMPORTANT: Always check result_df_row_count and plot_valid before interpreting results.
         If result_df_row_count is 0 or plot_valid is False, your query returned no data.
 
-        Note: The plot file is saved to the project root directory. When a plot is successfully
+        Note: The plot file is saved to the img/ directory. When a plot is successfully
         created, inform the user about the plot file location (plot_path) so they can access it.
 
         Note: plot_base64 is excluded from the return value to save tokens. The UI layer
@@ -248,7 +248,7 @@ def generate_workflow_diagram(
         Path to the generated diagram file
 
     Example:
-        >>> from agent.graph import create_agent, generate_workflow_diagram
+        >>> from src.agent.graph import create_agent, generate_workflow_diagram
         >>> app = create_agent()
         >>> diagram_path = generate_workflow_diagram(app, "workflow.png")
         >>> print(f"Diagram saved to {diagram_path}")

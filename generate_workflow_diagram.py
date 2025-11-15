@@ -4,7 +4,15 @@ This script automatically generates a visual representation of the agent workflo
 Run this script whenever you modify the workflow to update the diagram.
 """
 
-from agent.graph import create_agent, generate_workflow_diagram
+import sys
+from pathlib import Path
+
+# Add project root to Python path (must be before other imports)
+project_root = Path(__file__).parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from src.agent.graph import create_agent, generate_workflow_diagram
 
 if __name__ == "__main__":
     print("Creating agent...")

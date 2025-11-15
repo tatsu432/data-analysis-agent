@@ -8,10 +8,15 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
+# Add project root to Python path (must be before other imports)
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from agent.graph import create_agent
+from src.agent.graph import create_agent
 
 # Suppress LangSmith UUID warning
 warnings.filterwarnings(
@@ -92,10 +97,12 @@ async def run_analysis(query: str, thread_id: str = "default-thread"):
                                     "plot_base64" in tool_result
                                     and tool_result["plot_base64"]
                                 ):
-                                    # Save the plot to a file
+                                    # Save the plot to a file in img folder
                                     project_root = Path(__file__).parent
+                                    img_dir = project_root / "img"
+                                    img_dir.mkdir(parents=True, exist_ok=True)
                                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                    plot_path = project_root / f"plot_{timestamp}.png"
+                                    plot_path = img_dir / f"plot_{timestamp}.png"
 
                                     plot_bytes = base64.b64decode(
                                         tool_result["plot_base64"]
@@ -226,13 +233,15 @@ async def interactive_mode():
                                             "plot_base64" in tool_result
                                             and tool_result["plot_base64"]
                                         ):
-                                            # Save the plot to a file
+                                            # Save the plot to a file in img folder
                                             project_root = Path(__file__).parent
+                                            img_dir = project_root / "img"
+                                            img_dir.mkdir(parents=True, exist_ok=True)
                                             timestamp = datetime.now().strftime(
                                                 "%Y%m%d_%H%M%S"
                                             )
                                             plot_path = (
-                                                project_root / f"plot_{timestamp}.png"
+                                                img_dir / f"plot_{timestamp}.png"
                                             )
 
                                             plot_bytes = base64.b64decode(
