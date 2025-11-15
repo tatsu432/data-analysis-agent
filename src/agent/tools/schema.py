@@ -29,7 +29,7 @@ def get_dataset_schema() -> Dict[str, Any]:
     logger.info("INPUT - No parameters required")
 
     # Get the path to the CSV file
-    project_root = Path(__file__).parent.parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
     csv_path = project_root / "data" / "newly_confirmed_cases_daily.csv"
 
     # Load the dataset

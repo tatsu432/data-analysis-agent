@@ -193,12 +193,19 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
 
     # Generate timestamp for plot filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    plot_filename = f"plot_{timestamp}.png"
-    logger.info(f"Plot filename for this execution: {plot_filename}")
+    plot_basename = f"plot_{timestamp}.png"
 
     # Get the path to the CSV file
-    project_root = Path(__file__).parent.parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
     csv_path = project_root / "data" / "newly_confirmed_cases_daily.csv"
+
+    # Ensure img directory exists
+    img_dir = project_root / "img"
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use full path to img directory so plt.savefig saves to the correct location
+    plot_filename = str(img_dir / plot_basename)
+    logger.info(f"Plot filename for this execution: {plot_filename}")
 
     # Load the dataset
     logger.info(f"Loading dataset from: {csv_path}")
@@ -246,6 +253,9 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         exec(code, exec_globals)
         logger.info("Code execution completed successfully")
 
+        # Ensure matplotlib flushes any pending plots to disk
+        plt.close("all")  # Close all figures to ensure they're flushed
+
         # Check if result_df was created
         if "result_df" in exec_globals:
             result_df = exec_globals["result_df"]
@@ -273,31 +283,55 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
                     result["error"] = warning_msg
                     logger.warning(warning_msg)
 
-        # Check if plot was saved (using timestamped filename)
-        plot_path = project_root / plot_filename
+        # Check if plot was saved
+        # plot_filename is now a full path, so use it directly
+        plot_path = Path(plot_filename)
+
+        # Also check project root as fallback (in case plot was saved there)
+        plot_path_fallback = project_root / plot_basename
+
+        # Determine which path exists
+        found_plot_path = None
         if plot_path.exists():
-            logger.info(f"Plot file found: {plot_path}")
+            found_plot_path = plot_path
+            logger.info(f"Plot file found at expected location: {plot_path}")
+        elif plot_path_fallback.exists():
+            found_plot_path = plot_path_fallback
+            logger.info(f"Plot file found at fallback location: {plot_path_fallback}")
+            # Move it to the correct location for consistency
+            try:
+                found_plot_path.rename(plot_path)
+                found_plot_path = plot_path
+                logger.info(f"Moved plot to correct location: {plot_path}")
+            except Exception as e:
+                logger.warning(f"Could not move plot to img directory: {e}")
+
+        if found_plot_path and found_plot_path.exists():
             # Validate the plot
-            plot_validation = _validate_plot(plot_path)
+            plot_validation = _validate_plot(found_plot_path)
             result["plot_valid"] = plot_validation["is_valid"]
-            result["plot_validation_message"] = plot_validation["error_message"]
+            result["plot_validation_message"] = (
+                plot_validation.get("error_message") or "Plot is valid."
+            )
 
             if plot_validation["is_valid"]:
                 logger.info("Plot validation: PASSED")
             else:
                 logger.warning(
-                    f"Plot validation: FAILED - {plot_validation['error_message']}"
+                    f"Plot validation: FAILED - {plot_validation.get('error_message', 'Unknown error')}"
                 )
 
             # Return plot path (base64 encoding removed to save tokens - UI can load from file)
-            result["plot_path"] = str(plot_path)
+            result["plot_path"] = str(found_plot_path.absolute())
             logger.info(
-                f"Plot saved at: {plot_path} (file size: {plot_path.stat().st_size} bytes)"
+                f"Plot saved at: {found_plot_path} (file size: {found_plot_path.stat().st_size} bytes)"
             )
 
             # If plot is invalid, add warning to error message
             if not plot_validation["is_valid"]:
-                error_msg = plot_validation["error_message"]
+                error_msg = plot_validation.get(
+                    "error_message", "Plot validation failed"
+                )
                 if result["error"]:
                     result["error"] = (
                         f"{result['error']}\n\nPLOT VALIDATION ERROR: {error_msg}"
@@ -306,9 +340,13 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
                     result["error"] = f"PLOT VALIDATION ERROR: {error_msg}"
         else:
             result["plot_valid"] = False
-            result["plot_validation_message"] = "No plot file was created."
+            result["plot_validation_message"] = (
+                f"No plot file was created. Checked locations: {plot_path}, {plot_path_fallback}"
+            )
             result["plot_path"] = None
-            logger.info("No plot file was created")
+            logger.warning(
+                f"No plot file was created. Checked: {plot_path} and {plot_path_fallback}"
+            )
 
         result["success"] = True
         logger.info("Execution completed successfully")
