@@ -83,7 +83,7 @@ project-root/
 
 ## Tools
 
-### get_dataset_schema()
+### `get_dataset_schema()`
 
 Returns:
 - Column names  
@@ -94,7 +94,7 @@ Helps the agent avoid hallucinating nonexistent columns or datatypes.
 
 ---
 
-### run_covid_analysis(code: str)
+### `run_covid_analysis(code: str)`
 
 Executes generated Python code in a controlled environment.
 
