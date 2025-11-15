@@ -62,15 +62,19 @@ project-root/
 ├── data/
 │ └── newly_confirmed_cases_daily.csv
 │
-├── agent/
-│ ├── graph.py # LangGraph definition
-│ ├── prompts.py # Agent prompts and reasoning steps
-│ └── tools/
-│ ├── execution.py # run_covid_analysis tool
-│ └── schema.py # get_dataset_schema tool
-│
-├── app/
-│ └── ui.py # Optional Streamlit or FastAPI UI
+├── src/
+│ ├── agent/
+│ │ ├── graph.py # LangGraph definition
+│ │ ├── prompts.py # Agent prompts and reasoning steps
+│ │ └── tools/
+│ │ │ ├── execution.py # run_covid_analysis tool
+│ │ │ └── schema.py # get_dataset_schema tool
+│ │
+│ ├── app/
+│ │ └── ui.py # Optional Streamlit or FastAPI UI
+│ │
+│ ├── main.py # Main entry point
+│ └── generate_workflow_diagram.py # Script to generate workflow diagram
 │
 └── README.md
 ```
