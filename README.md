@@ -101,7 +101,7 @@ Execution rules:
   - stdout  
   - error  
   - preview of `result_df` if defined  
-  - saved plot `analysis_plot.png` if created  
+  - saved plot with timestamped filename (e.g., `plot_20251115_212901.png`) if created  
 
 ---
 
@@ -130,6 +130,7 @@ You can ask:
 - “How does the number of patients vary from January to July 2022 in Tokyo?”
 - “Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.”
 - “What characteristics does the patient count data have overall?”
+- "Can you model the Tokyo's covid case and tell me the model clearly?"
 
 ---
 

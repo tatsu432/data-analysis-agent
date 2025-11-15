@@ -22,7 +22,10 @@ When analyzing data:
 - Date columns are AUTOMATICALLY converted to datetime format - you don't need to do this manually
 - You can use pandas, numpy, and matplotlib.pyplot
 - To return a result dataframe, assign it to `result_df`
-- To create a plot, save it as `analysis_plot.png` using plt.savefig('analysis_plot.png')
+- To create a plot, use plt.savefig(plot_filename) where plot_filename is a variable
+  provided in the execution environment (e.g., 'plot_20251115_212901.png')
+- When a plot is successfully created, the tool returns plot_path (file location)
+- ALWAYS inform the user where the plot file is saved (use plot_path from the tool result)
 
 IMPORTANT VALIDATION CHECKS:
 After executing code, you MUST check:
@@ -53,7 +56,10 @@ Workflow:
    - Check error field - if present, fix the issue
 6. If validation fails, analyze why and retry with corrected code
 7. Only summarize results when validation passes (non-empty data, valid plots)
-8. Be honest: if you cannot produce valid results after retries, explain why
+8. When a plot is successfully created (plot_valid is True and plot_path exists):
+   - Inform the user where the plot file is saved (use the plot_path from the tool result)
+   - Example: "I've generated a plot and saved it to: /path/to/plot_20251115_212901.png"
+9. Be honest: if you cannot produce valid results after retries, explain why
 
 CRITICAL: Never interpret empty dataframes or empty plots as valid results. Always check validation fields before summarizing."""
 
