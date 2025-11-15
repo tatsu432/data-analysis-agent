@@ -2,6 +2,7 @@
 
 import base64
 import io
+import logging
 import sys
 import traceback
 from pathlib import Path
@@ -12,8 +13,13 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+logger = logging.getLogger(__name__)
+
 matplotlib.use("Agg")  # Use non-interactive backend
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # noqa: E402 - Must import after setting backend
+
+# Set ggplot style for all plots
+plt.style.use("ggplot")
 
 
 def _detect_and_convert_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -173,12 +179,20 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         - plot_validation_message: message about plot validation
         - success: boolean indicating if execution succeeded
     """
+    logger.info("=" * 60)
+    logger.info("TOOL EXECUTION: run_covid_analysis")
+    logger.info("=" * 60)
+    logger.info(f"INPUT - Code length: {len(code)} characters")
+    logger.debug(f"INPUT - Code content:\n{code}")
+
     # Get the path to the CSV file
     project_root = Path(__file__).parent.parent.parent
     csv_path = project_root / "data" / "newly_confirmed_cases_daily.csv"
 
     # Load the dataset
+    logger.info(f"Loading dataset from: {csv_path}")
     df = pd.read_csv(csv_path)
+    logger.info(f"Dataset loaded: {len(df)} rows, {len(df.columns)} columns")
 
     # Automatically detect and convert datetime columns
     df = _detect_and_convert_datetime_columns(df)
@@ -215,7 +229,9 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         sys.stderr = stderr_capture
 
         # Execute the code
+        logger.info("Executing user code...")
         exec(code, exec_globals)
+        logger.info("Code execution completed successfully")
 
         # Check if result_df was created
         if "result_df" in exec_globals:
@@ -223,6 +239,9 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
             if isinstance(result_df, pd.DataFrame):
                 # Get row count
                 result["result_df_row_count"] = len(result_df)
+                logger.info(
+                    f"result_df created: {len(result_df)} rows, {len(result_df.columns)} columns"
+                )
 
                 # Get preview (first 10 rows)
                 preview = result_df.head(10)
@@ -230,7 +249,7 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
 
                 # Warn if result_df is empty
                 if len(result_df) == 0:
-                    result["error"] = (
+                    warning_msg = (
                         "WARNING: result_df is empty (0 rows). "
                         "This usually means your filtering conditions returned no data. "
                         "Please check: "
@@ -238,19 +257,30 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
                         "2. Column names are correct, "
                         "3. Filter conditions are not too restrictive."
                     )
+                    result["error"] = warning_msg
+                    logger.warning(warning_msg)
 
         # Check if plot was saved
         plot_path = project_root / "analysis_plot.png"
         if plot_path.exists():
+            logger.info(f"Plot file found: {plot_path}")
             # Validate the plot before encoding
             plot_validation = _validate_plot(plot_path)
             result["plot_valid"] = plot_validation["is_valid"]
             result["plot_validation_message"] = plot_validation["error_message"]
 
+            if plot_validation["is_valid"]:
+                logger.info("Plot validation: PASSED")
+            else:
+                logger.warning(
+                    f"Plot validation: FAILED - {plot_validation['error_message']}"
+                )
+
             # Read and encode the plot
             with open(plot_path, "rb") as f:
                 plot_bytes = f.read()
                 result["plot_base64"] = base64.b64encode(plot_bytes).decode("utf-8")
+            logger.info(f"Plot encoded: {len(plot_bytes)} bytes")
 
             # If plot is invalid, add warning to error message
             if not plot_validation["is_valid"]:
@@ -267,13 +297,17 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         else:
             result["plot_valid"] = False
             result["plot_validation_message"] = "No plot file was created."
+            logger.info("No plot file was created")
 
         result["success"] = True
+        logger.info("Execution completed successfully")
 
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
         result["error"] = error_msg
         result["success"] = False
+        logger.error(f"Execution failed: {type(e).__name__}: {str(e)}")
+        logger.debug(f"Full traceback:\n{traceback.format_exc()}")
 
     finally:
         # Restore stdout and stderr
@@ -285,5 +319,20 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         stderr_output = stderr_capture.getvalue()
         if stderr_output and not result["error"]:
             result["error"] = stderr_output
+
+        # Log output summary
+        logger.info("OUTPUT SUMMARY:")
+        logger.info(f"  - Success: {result['success']}")
+        logger.info(f"  - stdout length: {len(result['stdout'])} characters")
+        logger.info(f"  - Has error: {result['error'] is not None}")
+        logger.info(
+            f"  - result_df_row_count: {result.get('result_df_row_count', 'N/A')}"
+        )
+        logger.info(f"  - plot_valid: {result.get('plot_valid', 'N/A')}")
+        if result.get("stdout"):
+            logger.debug(f"  - stdout content:\n{result['stdout']}")
+        if result.get("error"):
+            logger.debug(f"  - error content:\n{result['error']}")
+        logger.info("=" * 60)
 
     return result

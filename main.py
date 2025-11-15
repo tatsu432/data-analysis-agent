@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,14 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from agent.graph import create_agent
+
+# Suppress LangSmith UUID warning
+warnings.filterwarnings(
+    "ignore",
+    message="LangSmith now uses UUID v7 for run and trace identifiers.*",
+    category=UserWarning,
+    module="pydantic.v1.main",
+)
 
 # Load environment variables
 load_dotenv()

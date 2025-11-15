@@ -15,7 +15,11 @@ from typing_extensions import NotRequired
 from agent.prompts import ANALYSIS_PROMPT
 from agent.tools import get_dataset_schema, run_covid_analysis
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +34,16 @@ class AgentState(TypedDict):
 @tool
 def get_dataset_schema_tool() -> dict:
     """Get schema information about the COVID-19 dataset including columns, data types, and sample rows."""
-    return get_dataset_schema()
+    logger.info("Tool called: get_dataset_schema_tool")
+    try:
+        result = get_dataset_schema()
+        logger.info("Tool completed: get_dataset_schema_tool")
+        return result
+    except Exception as e:
+        logger.error(
+            f"Tool failed: get_dataset_schema_tool - {type(e).__name__}: {str(e)}"
+        )
+        raise
 
 
 @tool
@@ -58,7 +71,17 @@ def run_covid_analysis_tool(code: str) -> dict:
         IMPORTANT: Always check result_df_row_count and plot_valid before interpreting results.
         If result_df_row_count is 0 or plot_valid is False, your query returned no data.
     """
-    return run_covid_analysis(code)
+    logger.info("Tool called: run_covid_analysis_tool")
+    logger.info(f"Tool input - code length: {len(code)} characters")
+    try:
+        result = run_covid_analysis(code)
+        logger.info("Tool completed: run_covid_analysis_tool")
+        return result
+    except Exception as e:
+        logger.error(
+            f"Tool failed: run_covid_analysis_tool - {type(e).__name__}: {str(e)}"
+        )
+        raise
 
 
 def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
@@ -89,16 +112,69 @@ def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
     def call_model(state: AgentState):
         """Call the LLM with the current state."""
         messages = state["messages"]
+        logger.info("=" * 60)
+        logger.info("NODE: agent (call_model)")
+        logger.info(f"Number of messages in state: {len(messages)}")
+        if messages:
+            last_message = messages[-1]
+            if hasattr(last_message, "content") and last_message.content:
+                logger.debug(
+                    f"Last message content: {str(last_message.content)[:200]}..."
+                )
         prompt = ANALYSIS_PROMPT.invoke({"messages": messages})
+        logger.info("Invoking LLM...")
         response = llm_with_tools.invoke(prompt.messages)
+
+        # Log tool calls if any
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            logger.info(f"LLM requested {len(response.tool_calls)} tool call(s):")
+            for tool_call in response.tool_calls:
+                tool_name = getattr(tool_call, "name", "unknown")
+                logger.info(f"  - {tool_name}")
+        else:
+            logger.info("LLM response (no tool calls)")
+
         return {"messages": [response]}
 
     # Create the graph
     workflow = StateGraph(AgentState)
 
+    # Create a custom tool node wrapper for logging
+    def call_tools(state: AgentState):
+        """Call tools with logging."""
+        logger.info("=" * 60)
+        logger.info("NODE: tools (ToolNode)")
+        messages = state["messages"]
+        last_message = messages[-1] if messages else None
+
+        if (
+            last_message
+            and hasattr(last_message, "tool_calls")
+            and last_message.tool_calls
+        ):
+            logger.info(f"Executing {len(last_message.tool_calls)} tool call(s):")
+            for tool_call in last_message.tool_calls:
+                tool_name = getattr(tool_call, "name", "unknown")
+                tool_args = getattr(tool_call, "args", {})
+                logger.info(f"  - Tool: {tool_name}")
+                logger.debug(f"    Args: {tool_args}")
+
+        # Use ToolNode to execute tools
+        tool_node = ToolNode(tools)
+        result = tool_node.invoke(state)
+
+        # Log tool results
+        if "messages" in result:
+            for msg in result["messages"]:
+                if hasattr(msg, "name"):
+                    tool_name = getattr(msg, "name", "unknown")
+                    logger.info(f"Tool result received from: {tool_name}")
+
+        return result
+
     # Add nodes
     workflow.add_node("agent", call_model)
-    workflow.add_node("tools", ToolNode(tools))
+    workflow.add_node("tools", call_tools)
 
     # Set entry point
     workflow.set_entry_point("agent")

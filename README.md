@@ -128,7 +128,7 @@ If execution errors occur:
 You can ask:
 
 - “How does the number of patients vary from January to July 2022 in Tokyo?”
-- “Generate a line plot of the number of patients from May to August 2024 in each prefecture of the Kanto region.”
+- “Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.”
 - “What characteristics does the patient count data have overall?”
 
 ---

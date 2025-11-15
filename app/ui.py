@@ -4,8 +4,17 @@ import asyncio
 import base64
 import json
 import sys
+import warnings
 from io import BytesIO
 from pathlib import Path
+
+# Suppress LangSmith UUID warning
+warnings.filterwarnings(
+    "ignore",
+    message="LangSmith now uses UUID v7 for run and trace identifiers.*",
+    category=UserWarning,
+    module="pydantic.v1.main",
+)
 
 # Add project root to Python path (must be before other imports)
 project_root = Path(__file__).parent.parent
