@@ -1,14 +1,22 @@
 """Streamlit UI for the data analysis agent."""
+
 import asyncio
 import base64
-import os
+import sys
 from io import BytesIO
+from pathlib import Path
 
-import streamlit as st
-from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+# Add project root to Python path (must be before other imports)
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-from agent.graph import create_agent
+# Now import project modules
+import streamlit as st  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+from langchain_core.messages import HumanMessage  # noqa: E402
+
+from agent.graph import create_agent  # noqa: E402
 
 # Load environment variables
 load_dotenv()
@@ -34,7 +42,7 @@ if "agent" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        
+
         # Display plot if available
         if "plot" in message:
             st.image(message["plot"], caption="Analysis Plot")
@@ -45,7 +53,11 @@ if prompt := st.chat_input("Ask a question about the data..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    
+
+    # Initialize response variables (needed outside the with block)
+    full_response = ""
+    plot_base64 = None
+
     # Get agent response
     with st.chat_message("assistant"):
         with st.spinner("Analyzing..."):
@@ -55,16 +67,15 @@ if prompt := st.chat_input("Ask a question about the data..."):
                 },
                 "recursion_limit": 50,
             }
-            
+
             messages = [HumanMessage(content=prompt)]
-            
+
             # Collect response
             response_placeholder = st.empty()
-            full_response = ""
-            plot_base64 = None
-            
+            # Use mutable containers to avoid nonlocal issues
+            response_data = {"full_response": "", "plot_base64": None}
+
             async def stream_response():
-                nonlocal full_response, plot_base64
                 async for event in st.session_state.agent.astream(
                     {"messages": messages},
                     config=config,
@@ -73,40 +84,58 @@ if prompt := st.chat_input("Ask a question about the data..."):
                     # Handle different event structures
                     if isinstance(event, dict):
                         for node_name, node_output in event.items():
-                            if isinstance(node_output, dict) and "messages" in node_output:
+                            if (
+                                isinstance(node_output, dict)
+                                and "messages" in node_output
+                            ):
                                 for message in node_output["messages"]:
                                     # Check for tool results with plots (ToolMessage)
-                                    if hasattr(message, "content") and isinstance(message.content, str):
+                                    if hasattr(message, "content") and isinstance(
+                                        message.content, str
+                                    ):
                                         # Try to parse tool result for plots
                                         import json
+
                                         try:
                                             if "plot_base64" in message.content:
                                                 # Try to extract plot from tool result
-                                                tool_result = json.loads(message.content)
+                                                tool_result = json.loads(
+                                                    message.content
+                                                )
                                                 if "plot_base64" in tool_result:
-                                                    plot_base64 = tool_result["plot_base64"]
+                                                    response_data["plot_base64"] = (
+                                                        tool_result["plot_base64"]
+                                                    )
                                         except (json.JSONDecodeError, TypeError):
                                             pass
-                                    
+
                                     # Display AI responses
                                     if hasattr(message, "content") and message.content:
                                         content = str(message.content)
                                         if content and content.strip():
-                                            full_response += content + "\n\n"
-                                            response_placeholder.markdown(full_response)
-            
+                                            response_data["full_response"] += (
+                                                content + "\n\n"
+                                            )
+                                            response_placeholder.markdown(
+                                                response_data["full_response"]
+                                            )
+
             # Run async function
             asyncio.run(stream_response())
-            
+
+            # Extract final values from response_data
+            full_response = response_data["full_response"]
+            plot_base64 = response_data["plot_base64"]
+
             # Display final response
             response_placeholder.markdown(full_response)
-            
+
             # Try to extract and display plot from tool results
             # This is a simplified version - in practice, you'd parse tool results more carefully
             if plot_base64:
                 plot_bytes = base64.b64decode(plot_base64)
                 st.image(plot_bytes, caption="Analysis Plot")
-    
+
     # Add assistant response to history
     message_to_add = {"role": "assistant", "content": full_response}
     if plot_base64:
@@ -124,14 +153,13 @@ with st.sidebar:
         "Show me the top 5 prefectures with the highest total cases in 2024.",
         "Compare the patient counts between Tokyo and Osaka over time.",
     ]
-    
+
     for query in example_queries:
         if st.button(query, key=f"example_{hash(query)}", use_container_width=True):
             st.session_state.messages.append({"role": "user", "content": query})
             st.rerun()
-    
+
     st.markdown("---")
     if st.button("Clear Chat History"):
         st.session_state.messages = []
         st.rerun()
-
