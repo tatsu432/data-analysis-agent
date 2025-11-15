@@ -56,6 +56,7 @@ High-Level Components:
 ---
 
 ## Repository Structure
+```
 project-root/
 │
 ├── data/
@@ -72,6 +73,7 @@ project-root/
 │ └── ui.py # Optional Streamlit or FastAPI UI
 │
 └── README.md
+```
 
 ---
 
