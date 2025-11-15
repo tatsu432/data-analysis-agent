@@ -1,10 +1,10 @@
 """Tool to execute Python code for COVID-19 data analysis."""
 
-import base64
 import io
 import logging
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -164,6 +164,8 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
     - Allowed imports: pandas, numpy, matplotlib.pyplot
     - Captures stdout, errors, dataframe preview, and plots
     - Automatically converts time series columns to datetime
+    - Plot filename is available as `plot_filename` variable (e.g., 'plot_20251115_212901.png')
+      Use plt.savefig(plot_filename) to save plots
 
     Args:
         code: Python code string to execute
@@ -174,16 +176,25 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         - error: error message if execution failed
         - result_df_preview: preview of result_df if defined (first 10 rows)
         - result_df_row_count: number of rows in result_df if defined
-        - plot_base64: base64-encoded plot if analysis_plot.png was created
         - plot_valid: boolean indicating if plot is valid and contains data
         - plot_validation_message: message about plot validation
+        - plot_path: absolute path to the saved plot file (if plot was created)
         - success: boolean indicating if execution succeeded
+
+        Note: The plot file is saved to the project root directory and kept for user access.
+        The UI layer can load the plot directly from plot_path. Base64 encoding is not used
+        to save tokens and computation.
     """
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: run_covid_analysis")
     logger.info("=" * 60)
     logger.info(f"INPUT - Code length: {len(code)} characters")
     logger.debug(f"INPUT - Code content:\n{code}")
+
+    # Generate timestamp for plot filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plot_filename = f"plot_{timestamp}.png"
+    logger.info(f"Plot filename for this execution: {plot_filename}")
 
     # Get the path to the CSV file
     project_root = Path(__file__).parent.parent.parent
@@ -198,11 +209,13 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
     df = _detect_and_convert_datetime_columns(df)
 
     # Prepare execution environment
+    # Make plot filename available to the executed code
     exec_globals = {
         "pd": pd,
         "np": np,
         "plt": plt,
         "df": df,
+        "plot_filename": plot_filename,  # Available for use in code
         "__builtins__": __builtins__,
     }
 
@@ -215,9 +228,9 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         "error": None,
         "result_df_preview": None,
         "result_df_row_count": None,
-        "plot_base64": None,
         "plot_valid": None,
         "plot_validation_message": None,
+        "plot_path": None,
         "success": False,
     }
 
@@ -260,11 +273,11 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
                     result["error"] = warning_msg
                     logger.warning(warning_msg)
 
-        # Check if plot was saved
-        plot_path = project_root / "analysis_plot.png"
+        # Check if plot was saved (using timestamped filename)
+        plot_path = project_root / plot_filename
         if plot_path.exists():
             logger.info(f"Plot file found: {plot_path}")
-            # Validate the plot before encoding
+            # Validate the plot
             plot_validation = _validate_plot(plot_path)
             result["plot_valid"] = plot_validation["is_valid"]
             result["plot_validation_message"] = plot_validation["error_message"]
@@ -276,11 +289,11 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
                     f"Plot validation: FAILED - {plot_validation['error_message']}"
                 )
 
-            # Read and encode the plot
-            with open(plot_path, "rb") as f:
-                plot_bytes = f.read()
-                result["plot_base64"] = base64.b64encode(plot_bytes).decode("utf-8")
-            logger.info(f"Plot encoded: {len(plot_bytes)} bytes")
+            # Return plot path (base64 encoding removed to save tokens - UI can load from file)
+            result["plot_path"] = str(plot_path)
+            logger.info(
+                f"Plot saved at: {plot_path} (file size: {plot_path.stat().st_size} bytes)"
+            )
 
             # If plot is invalid, add warning to error message
             if not plot_validation["is_valid"]:
@@ -291,12 +304,10 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
                     )
                 else:
                     result["error"] = f"PLOT VALIDATION ERROR: {error_msg}"
-
-            # Clean up the plot file
-            plot_path.unlink()
         else:
             result["plot_valid"] = False
             result["plot_validation_message"] = "No plot file was created."
+            result["plot_path"] = None
             logger.info("No plot file was created")
 
         result["success"] = True

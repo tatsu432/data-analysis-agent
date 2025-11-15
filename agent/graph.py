@@ -60,7 +60,8 @@ def run_covid_analysis_tool(code: str) -> dict:
         code: Python code string to execute. The dataset is available as `df`.
               Date columns are automatically converted to datetime.
               Use pandas, numpy, and matplotlib.pyplot. Assign results to `result_df`
-              and save plots as `analysis_plot.png`.
+              and save plots using plt.savefig(plot_filename) where plot_filename is
+              a variable provided in the execution environment (e.g., 'plot_20251115_212901.png').
 
     Returns:
         Dictionary with execution results including:
@@ -68,18 +69,28 @@ def run_covid_analysis_tool(code: str) -> dict:
         - error: error or warning messages (check this!)
         - result_df_preview: preview of result_df (first 10 rows)
         - result_df_row_count: number of rows in result_df (check if 0!)
-        - plot_base64: base64-encoded plot if created
         - plot_valid: boolean indicating if plot contains data (check this!)
         - plot_validation_message: message about plot validation
+        - plot_path: absolute path to the saved plot file (if plot was created)
         - success: boolean indicating if execution succeeded
 
         IMPORTANT: Always check result_df_row_count and plot_valid before interpreting results.
         If result_df_row_count is 0 or plot_valid is False, your query returned no data.
+
+        Note: The plot file is saved to the project root directory. When a plot is successfully
+        created, inform the user about the plot file location (plot_path) so they can access it.
+
+        Note: plot_base64 is excluded from the return value to save tokens. The UI layer
+        can load the plot directly from plot_path if needed.
     """
     logger.info("Tool called: run_covid_analysis_tool")
     logger.info(f"Tool input - code length: {len(code)} characters")
     try:
         result = run_covid_analysis(code)
+        # Remove plot_base64 to save tokens - LLM doesn't need to see the image
+        # The UI layer can load the plot from plot_path if needed
+        if "plot_base64" in result:
+            del result["plot_base64"]
         logger.info("Tool completed: run_covid_analysis_tool")
         return result
     except Exception as e:

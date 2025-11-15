@@ -87,7 +87,8 @@ if prompt := st.chat_input("Ask a question about the data..."):
 
     # Initialize response variables
     full_response = ""
-    plot_base64 = None
+    plot_path = None
+    plot_base64 = None  # Fallback for backward compatibility
     current_debug_info = []  # Debug info for this response
 
     # Get agent response
@@ -104,7 +105,7 @@ if prompt := st.chat_input("Ask a question about the data..."):
         # Collect response
         response_placeholder = st.empty()
         status_placeholder = st.empty()
-        response_data = {"full_response": "", "plot_base64": None}
+        response_data = {"full_response": "", "plot_path": None, "plot_base64": None}
 
         # Status messages for different nodes
         status_messages = {
@@ -162,8 +163,21 @@ if prompt := st.chat_input("Ask a question about the data..."):
                                                 }
                                                 current_debug_info.append(debug_entry)
 
-                                                # Extract plot if available
-                                                if "plot_base64" in tool_result:
+                                                # Extract plot path if available (load from file instead of base64)
+                                                if (
+                                                    "plot_path" in tool_result
+                                                    and tool_result["plot_path"]
+                                                ):
+                                                    plot_path = Path(
+                                                        tool_result["plot_path"]
+                                                    )
+                                                    if plot_path.exists():
+                                                        # Store plot path for later display
+                                                        response_data["plot_path"] = (
+                                                            str(plot_path)
+                                                        )
+                                                # Fallback: check for plot_base64 (for backward compatibility)
+                                                elif "plot_base64" in tool_result:
                                                     response_data["plot_base64"] = (
                                                         tool_result["plot_base64"]
                                                     )
@@ -248,7 +262,10 @@ if prompt := st.chat_input("Ask a question about the data..."):
 
         # Extract final values from response_data
         full_response = response_data["full_response"].strip()
-        plot_base64 = response_data["plot_base64"]
+        plot_path = response_data.get("plot_path")
+        plot_base64 = response_data.get(
+            "plot_base64"
+        )  # Fallback for backward compatibility
 
         # Display final response
         if full_response:
@@ -258,8 +275,12 @@ if prompt := st.chat_input("Ask a question about the data..."):
                 "I'm working on your request. Please check the debug information below for details."
             )
 
-        # Display plot if available
-        if plot_base64:
+        # Display plot if available (prefer plot_path, fallback to plot_base64)
+        if plot_path:
+            plot_path_obj = Path(plot_path)
+            if plot_path_obj.exists():
+                st.image(str(plot_path_obj), caption="Analysis Plot")
+        elif plot_base64:
             plot_bytes = base64.b64decode(plot_base64)
             st.image(plot_bytes, caption="Analysis Plot")
 
@@ -274,7 +295,13 @@ if prompt := st.chat_input("Ask a question about the data..."):
 
     # Add assistant response to history (only user-facing content)
     message_to_add = {"role": "assistant", "content": full_response}
-    if plot_base64:
+    # Store plot for history (prefer plot_path, fallback to plot_base64)
+    if plot_path:
+        plot_path_obj = Path(plot_path)
+        if plot_path_obj.exists():
+            with open(plot_path_obj, "rb") as f:
+                message_to_add["plot"] = BytesIO(f.read())
+    elif plot_base64:
         plot_bytes = base64.b64decode(plot_base64)
         message_to_add["plot"] = BytesIO(plot_bytes)
     st.session_state.messages.append(message_to_add)

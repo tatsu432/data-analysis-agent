@@ -78,7 +78,17 @@ async def run_analysis(query: str, thread_id: str = "default-thread"):
                                 else:
                                     continue
 
+                                # Prefer plot_path if available (more efficient)
                                 if (
+                                    "plot_path" in tool_result
+                                    and tool_result["plot_path"]
+                                ):
+                                    plot_path = Path(tool_result["plot_path"])
+                                    if plot_path.exists():
+                                        plot_saved = True
+                                        print(f"\n📊 Plot saved to: {plot_path}\n")
+                                # Fallback to plot_base64 if plot_path not available
+                                elif (
                                     "plot_base64" in tool_result
                                     and tool_result["plot_base64"]
                                 ):
@@ -195,31 +205,50 @@ async def interactive_mode():
                                     try:
                                         if isinstance(message.content, str):
                                             tool_result = json.loads(message.content)
-                                            if (
-                                                "plot_base64" in tool_result
-                                                and tool_result["plot_base64"]
-                                            ):
-                                                # Save the plot to a file
-                                                project_root = Path(__file__).parent
-                                                timestamp = datetime.now().strftime(
-                                                    "%Y%m%d_%H%M%S"
-                                                )
-                                                plot_path = (
-                                                    project_root
-                                                    / f"plot_{timestamp}.png"
-                                                )
+                                        elif isinstance(message.content, dict):
+                                            tool_result = message.content
+                                        else:
+                                            continue
 
-                                                plot_bytes = base64.b64decode(
-                                                    tool_result["plot_base64"]
-                                                )
-                                                with open(plot_path, "wb") as f:
-                                                    f.write(plot_bytes)
-
+                                        # Prefer plot_path if available (more efficient)
+                                        if (
+                                            "plot_path" in tool_result
+                                            and tool_result["plot_path"]
+                                        ):
+                                            plot_path = Path(tool_result["plot_path"])
+                                            if plot_path.exists():
                                                 plot_saved = True
                                                 print(
                                                     f"\n📊 Plot saved to: {plot_path}\n"
                                                 )
-                                    except (json.JSONDecodeError, TypeError, KeyError):
+                                        # Fallback to plot_base64 if plot_path not available
+                                        elif (
+                                            "plot_base64" in tool_result
+                                            and tool_result["plot_base64"]
+                                        ):
+                                            # Save the plot to a file
+                                            project_root = Path(__file__).parent
+                                            timestamp = datetime.now().strftime(
+                                                "%Y%m%d_%H%M%S"
+                                            )
+                                            plot_path = (
+                                                project_root / f"plot_{timestamp}.png"
+                                            )
+
+                                            plot_bytes = base64.b64decode(
+                                                tool_result["plot_base64"]
+                                            )
+                                            with open(plot_path, "wb") as f:
+                                                f.write(plot_bytes)
+
+                                            plot_saved = True
+                                            print(f"\n📊 Plot saved to: {plot_path}\n")
+                                    except (
+                                        json.JSONDecodeError,
+                                        TypeError,
+                                        KeyError,
+                                        ValueError,
+                                    ):
                                         pass
 
                                 # Print tool calls
