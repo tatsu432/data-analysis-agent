@@ -7,12 +7,12 @@ Run this script whenever you modify the workflow to update the diagram.
 import sys
 from pathlib import Path
 
-# Add project root to Python path (must be before other imports)
-project_root = Path(__file__).parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
+# Add src directory to Python path (must be before other imports)
+src_dir = Path(__file__).parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
-from src.agent.graph import create_agent, generate_workflow_diagram
+from agent.graph import create_agent, generate_workflow_diagram
 
 if __name__ == "__main__":
     print("Creating agent...")

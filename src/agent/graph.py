@@ -14,8 +14,8 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import NotRequired
 
-from src.agent.prompts import ANALYSIS_PROMPT
-from src.agent.tools import get_dataset_schema, run_covid_analysis
+from .prompts import ANALYSIS_PROMPT
+from .tools import get_dataset_schema, run_covid_analysis
 
 logging.basicConfig(
     level=logging.INFO,
