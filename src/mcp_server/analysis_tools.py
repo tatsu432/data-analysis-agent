@@ -8,11 +8,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
+import arch
 import matplotlib
 import numpy as np
 import pandas as pd
+import pmdarima as pm
+import sklearn
+import statsmodels
+import statsmodels.api as sm
+import torch
 from fastmcp import FastMCP
 from PIL import Image
+from prophet import Prophet
+from sklearn import (
+    linear_model,
+    metrics,
+    model_selection,
+    preprocessing,
+)
 
 from .datasets_registry import DATASETS
 from .schema import AnalysisResultOutput, DatasetSchemaOutput
@@ -426,7 +439,22 @@ def run_analysis(
     - Each dataset also has a code_name alias (e.g., df_covid_daily, df_jpm_patients)
     - If primary_dataset_id is provided, that dataset is also available as `df`
     - If only one dataset is provided, it's automatically available as `df`
-    - Allowed imports: pandas, numpy, matplotlib.pyplot
+    - Allowed libraries: pandas (pd), numpy (np), matplotlib.pyplot (plt), sklearn, statsmodels, torch, prophet, pmdarima, arch
+      - sklearn modules available: linear_model, metrics, model_selection, preprocessing
+        - You can use: sklearn.linear_model, sklearn.metrics, sklearn.model_selection, sklearn.preprocessing
+        - Or import directly: from sklearn.linear_model import LinearRegression
+      - statsmodels available as `sm` or `statsmodels`: comprehensive statistical modeling
+        - Regression: sm.OLS, sm.GLM, sm.Logit, etc.
+        - Time series: sm.tsa.ARIMA, sm.tsa.SARIMAX (seasonal ARIMA with exogenous variables)
+        - State space models: sm.tsa.UnobservedComponents, sm.tsa.DynamicFactor, sm.tsa.statespace.*
+          - Note: SARIMAX is built on state space framework and supports exogenous regressors
+        - Vector models: sm.tsa.VAR, sm.tsa.VARMAX (vector autoregression)
+        - Statistical tests: sm.stats.acorr_ljungbox, sm.stats.diagnostic, etc.
+      - PyTorch available as `torch`: torch.tensor, torch.nn, torch.optim, etc.
+      - Time series libraries:
+        - Prophet (Facebook Prophet) available as `Prophet`: Prophet().fit(), Prophet().predict()
+        - pmdarima (Auto ARIMA) available as `pm` or `pmdarima`: pm.auto_arima(), pm.ARIMA()
+        - arch (ARCH/GARCH) available as `arch`: arch.arch_model(), arch.GARCH()
     - Captures stdout, errors, dataframe preview, and plots
     - Automatically converts time series columns to datetime
     - Plot filename is available as `plot_filename` variable
@@ -514,6 +542,18 @@ def run_analysis(
         "pd": pd,
         "np": np,
         "plt": plt,
+        "sklearn": sklearn,  # Full sklearn module for imports like "from sklearn.linear_model import LinearRegression"
+        "linear_model": linear_model,  # Direct access: linear_model.LinearRegression()
+        "metrics": metrics,  # Direct access: metrics.mean_absolute_percentage_error()
+        "model_selection": model_selection,  # Direct access: model_selection.train_test_split()
+        "preprocessing": preprocessing,  # Direct access: preprocessing.StandardScaler()
+        "sm": sm,  # statsmodels.api - for statistical modeling (OLS, ARIMA, etc.)
+        "statsmodels": statsmodels,  # Full statsmodels module for accessing all submodules
+        "torch": torch,  # PyTorch for deep learning and tensor operations
+        "Prophet": Prophet,  # Facebook Prophet for time series forecasting
+        "pm": pm,  # pmdarima for auto ARIMA
+        "pmdarima": pm,  # Alternative name for pmdarima
+        "arch": arch,  # ARCH/GARCH models for volatility modeling
         "dfs": dfs,  # Dict of all datasets
         "plot_filename": plot_filename,
         "__builtins__": __builtins__,

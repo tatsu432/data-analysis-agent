@@ -17,6 +17,11 @@ COVID_NEW_CASES_DAILY_DESCRIPTION = (
     "COVID-19 newly confirmed cases daily data for Japanese prefectures (local CSV)."
 )
 
+MR_ACTIVITY_DATA_DESCRIPTION = """MR (Medical Representative) activity data by prefecture, month, and HP/GP type. 
+Contains detailing visits (float), number of emails sent (int), and number of seminars hosted (int) for each 
+prefecture-month-HP/GP combination. Covers all 47 prefectures of Japan from 2023-04 to 2025-09. 
+HP (Hospitals with 20+ beds) typically have higher activity levels than GP (General Practices with <20 beds)."""
+
 DATASETS: Dict[str, Dict[str, Any]] = {
     "jpm_patient_data": {
         "path": PROJECT_ROOT / "data" / "jpm_patient_data.csv",
@@ -32,5 +37,10 @@ DATASETS: Dict[str, Dict[str, Any]] = {
         "path": PROJECT_ROOT / "data" / "newly_confirmed_cases_daily.csv",
         "description": COVID_NEW_CASES_DAILY_DESCRIPTION,
         "code_name": "df_covid_daily",
+    },
+    "mr_activity_data": {
+        "path": PROJECT_ROOT / "data" / "mr_activity_data.csv",
+        "description": MR_ACTIVITY_DATA_DESCRIPTION,
+        "code_name": "df_mr_activity",  # name to bind in exec environment
     },
 }
