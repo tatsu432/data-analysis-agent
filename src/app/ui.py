@@ -195,6 +195,7 @@ with st.sidebar:
         "Can you model the Tokyo's covid case and tell me the model clearly?",
         "Can you compare the each product's number of patients over the time for GP only?",
         "Can you generate the line plots of the number of the patients for each product only for those at risk over the time?",
+        "Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE."
     ]
 
     for query in example_queries:
