@@ -193,6 +193,8 @@ with st.sidebar:
         "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
         "What characteristics does the patient count data have overall?",
         "Can you model the Tokyo's covid case and tell me the model clearly?",
+        "Can you compare the each product's number of patients over the time for GP only?",
+        "Can you generate the line plots of the number of the patients for each product only for those at risk over the time?",
     ]
 
     for query in example_queries:
@@ -285,9 +287,17 @@ if prompt := st.chat_input("Ask a question about the data..."):
                                                         "name", "tool"
                                                     )
 
-                                                if tool_name == "get_dataset_schema":
+                                                if tool_name == "list_datasets":
+                                                    status_placeholder.info(
+                                                        "📋 Listing available datasets..."
+                                                    )
+                                                elif tool_name == "get_dataset_schema":
                                                     status_placeholder.info(
                                                         "📊 Examining dataset structure..."
+                                                    )
+                                                elif tool_name == "run_analysis":
+                                                    status_placeholder.info(
+                                                        "⚙️ Executing analysis and generating results..."
                                                     )
                                                 elif tool_name == "run_covid_analysis":
                                                     status_placeholder.info(
