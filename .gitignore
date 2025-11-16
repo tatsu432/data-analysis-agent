@@ -53,3 +53,6 @@ data*
 
 # exception for the agent workflow diagram
 !agent_workflow.png
+
+# LangGraph API
+.langgraph_api*
