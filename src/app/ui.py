@@ -1,39 +1,33 @@
-"""Streamlit UI for the data analysis agent."""
+"""Streamlit UI for the data analysis agent.
 
-import asyncio
-import base64
+This UI connects to the LangGraph Server via HTTP API.
+"""
+
 import json
+import os
 import sys
-import warnings
+import time
+import uuid
 from io import BytesIO
 from pathlib import Path
 
-# Suppress LangSmith UUID warning
-warnings.filterwarnings(
-    "ignore",
-    message="LangSmith now uses UUID v7 for run and trace identifiers.*",
-    category=UserWarning,
-    module="pydantic.v1.main",
-)
-
-# Add project root to Python path (must be before other imports)
+# Add project root to Python path
 project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# Now import project modules
-import streamlit as st  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
-from langchain_core.messages import (  # noqa: E402
-    AIMessage,
-    HumanMessage,
-    ToolMessage,
-)
+import requests
+import streamlit as st
+from dotenv import load_dotenv
 
-from src.agent.graph import create_agent  # noqa: E402
-
-# Load environment variables
 load_dotenv()
+
+# Configuration
+LANGGRAPH_SERVER_URL = os.getenv("LANGGRAPH_SERVER_URL", "http://localhost:2024")
+GRAPH_NAME = os.getenv("LANGGRAPH_GRAPH_NAME", "data_analysis_agent")
+ASSISTANT_ID = os.getenv(
+    "LANGGRAPH_ASSISTANT_ID", "c0cc005a-576b-4f63-9375-bf8ac46e15c7"
+)
 
 # Page config
 st.set_page_config(
@@ -45,276 +39,160 @@ st.set_page_config(
 st.title("📊 Data Analysis Agent")
 st.markdown("Ask questions about COVID-19 data for Japanese prefectures")
 
+
+def get_or_create_assistant():
+    """Get or create the assistant_id for a graph."""
+    if ASSISTANT_ID:
+        return ASSISTANT_ID
+
+    try:
+        response = requests.get(
+            f"{LANGGRAPH_SERVER_URL}/assistants/{GRAPH_NAME}",
+            timeout=5,
+        )
+        if response.status_code == 200:
+            assistant = response.json()
+            return assistant.get("assistant_id") or GRAPH_NAME
+    except Exception:
+        pass
+
+    try:
+        response = requests.post(
+            f"{LANGGRAPH_SERVER_URL}/assistants",
+            json={"graph_id": GRAPH_NAME},
+            timeout=5,
+        )
+        if response.status_code in [200, 201]:
+            assistant = response.json()
+            return assistant.get("assistant_id") or GRAPH_NAME
+    except Exception:
+        pass
+
+    return GRAPH_NAME
+
+
+@st.cache_resource
+def check_server_health():
+    """Check if the LangGraph server is running."""
+    try:
+        response = requests.get(f"{LANGGRAPH_SERVER_URL}/docs", timeout=5)
+        return response.status_code == 200, None
+    except Exception as e:
+        return False, str(e)
+
+
+def get_or_create_thread(thread_id: str):
+    """Get or create a thread in LangGraph Server."""
+    try:
+        response = requests.get(
+            f"{LANGGRAPH_SERVER_URL}/threads/{thread_id}",
+            timeout=5,
+        )
+        if response.status_code == 200:
+            return thread_id
+    except Exception:
+        pass
+
+    try:
+        response = requests.post(
+            f"{LANGGRAPH_SERVER_URL}/threads",
+            json={"thread_id": thread_id},
+            timeout=5,
+        )
+        if response.status_code in [200, 201]:
+            return thread_id
+    except Exception as e:
+        raise Exception(f"Failed to create thread: {e}")
+
+    return thread_id
+
+
+def create_run(thread_id: str, input_data: dict, assistant_id: str):
+    """Create a run in LangGraph Server."""
+    # Verify assistant exists
+    try:
+        response = requests.get(
+            f"{LANGGRAPH_SERVER_URL}/assistants/{assistant_id}",
+            timeout=5,
+        )
+        if response.status_code != 200:
+            raise Exception(f"Assistant {assistant_id} not found")
+    except Exception as e:
+        raise Exception(f"Error checking assistant: {e}")
+
+    # Create run
+    response = requests.post(
+        f"{LANGGRAPH_SERVER_URL}/threads/{thread_id}/runs",
+        json={"assistant_id": assistant_id, "input": input_data},
+        timeout=30,
+    )
+
+    if response.status_code in [200, 201]:
+        return response.json()
+    else:
+        error_detail = response.text
+        try:
+            error_json = response.json()
+            error_detail = str(error_json)
+        except Exception:
+            pass
+        raise Exception(
+            f"Failed to create run: {response.status_code} - {error_detail}"
+        )
+
+
+def stream_run_events(thread_id: str, run_id: str):
+    """Stream events from a run."""
+    response = requests.get(
+        f"{LANGGRAPH_SERVER_URL}/threads/{thread_id}/runs/{run_id}/stream",
+        stream=True,
+        timeout=300,
+    )
+    if response.status_code == 200:
+        return response
+    else:
+        raise Exception(
+            f"Failed to stream events: {response.status_code} - {response.text}"
+        )
+
+
 # Initialize session state
-if "agent" not in st.session_state:
-    with st.spinner("Initializing agent..."):
-        st.session_state.agent = create_agent()
-        st.session_state.thread_id = "streamlit-session"
-        st.session_state.messages = []
-        st.session_state.debug_info = []  # Store debug/technical information
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Check server health
+server_healthy, health_info = check_server_health()
+if not server_healthy:
+    st.error(
+        f"❌ Cannot connect to LangGraph Server at {LANGGRAPH_SERVER_URL}\n\n"
+        f"Please make sure:\n"
+        f"1. The MCP server is running: `python -m src.mcp_server`\n"
+        f"2. The LangGraph Server is running: `langgraph dev`\n"
+        f"3. The server URL is correct (current: {LANGGRAPH_SERVER_URL})"
+    )
+    if health_info:
+        st.error(f"Error: {health_info}")
+    st.stop()
 
-        # Display plot if available
-        if "plot" in message:
-            st.image(message["plot"], caption="Analysis Plot")
+# Get assistant ID
+assistant_id = get_or_create_assistant()
 
-# Debug information expander (only show if there's debug info)
-if st.session_state.debug_info:
-    with st.expander("🔧 Debug Information (for engineers)", expanded=False):
-        for idx, debug_entry in enumerate(st.session_state.debug_info):
-            st.subheader(f"Query: {debug_entry['query']}")
-            for debug_item in debug_entry["debug_data"]:
-                st.markdown(f"**Tool: {debug_item.get('tool', 'unknown')}**")
-                if debug_item["type"] == "tool_result":
-                    # Pretty print JSON data
-                    st.json(debug_item["data"])
-                else:
-                    st.text(debug_item["data"])
-                st.markdown("---")
-            if idx < len(st.session_state.debug_info) - 1:
-                st.markdown("---")
-
-# Chat input
-if prompt := st.chat_input("Ask a question about the data..."):
-    # Add user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # Initialize response variables
-    full_response = ""
-    plot_path = None
-    plot_base64 = None  # Fallback for backward compatibility
-    current_debug_info = []  # Debug info for this response
-
-    # Get agent response
-    with st.chat_message("assistant"):
-        config = {
-            "configurable": {
-                "thread_id": st.session_state.thread_id,
-            },
-            "recursion_limit": 50,
-        }
-
-        messages = [HumanMessage(content=prompt)]
-
-        # Collect response
-        response_placeholder = st.empty()
-        status_placeholder = st.empty()
-        response_data = {"full_response": "", "plot_path": None, "plot_base64": None}
-
-        # Status messages for different nodes
-        status_messages = {
-            "agent": "🤔 Thinking about the analysis plan...",
-            "tools": "⚙️ Executing analysis...",
-        }
-
-        def get_tool_status_message(tool_name: str) -> str:
-            """Get a specific status message based on the tool being called."""
-            tool_status_map = {
-                "get_dataset_schema_tool": "📊 Analyzing dataset structure...",
-                "run_covid_analysis_tool": "⚙️ Executing data analysis code...",
-            }
-            return tool_status_map.get(tool_name, "⚙️ Running tool...")
-
-        async def stream_response():
-            current_node = None
-            async for event in st.session_state.agent.astream(
-                {"messages": messages},
-                config=config,
-                stream_mode="updates",
-            ):
-                # Handle different event structures
-                if isinstance(event, dict):
-                    for node_name, node_output in event.items():
-                        # Update status based on current node
-                        if node_name != current_node:
-                            current_node = node_name
-                            if node_name in status_messages:
-                                status_placeholder.info(status_messages[node_name])
-
-                        if isinstance(node_output, dict) and "messages" in node_output:
-                            for message in node_output["messages"]:
-                                # Handle ToolMessage (debug/technical info)
-                                if isinstance(message, ToolMessage):
-                                    # Update status for specific tool
-                                    tool_name = getattr(message, "name", "unknown")
-                                    status_placeholder.info(
-                                        get_tool_status_message(tool_name)
-                                    )
-
-                                    # Store debug info but don't show to user
-                                    try:
-                                        if isinstance(message.content, str):
-                                            # Try to parse as JSON
-                                            try:
-                                                tool_result = json.loads(
-                                                    message.content
-                                                )
-                                                # Store debug info
-                                                debug_entry = {
-                                                    "type": "tool_result",
-                                                    "tool": tool_name,
-                                                    "data": tool_result,
-                                                }
-                                                current_debug_info.append(debug_entry)
-
-                                                # Extract plot path if available (load from file instead of base64)
-                                                if (
-                                                    "plot_path" in tool_result
-                                                    and tool_result["plot_path"]
-                                                ):
-                                                    plot_path = Path(
-                                                        tool_result["plot_path"]
-                                                    )
-                                                    if plot_path.exists():
-                                                        # Store plot path for later display
-                                                        response_data["plot_path"] = (
-                                                            str(plot_path)
-                                                        )
-                                                # Fallback: check for plot_base64 (for backward compatibility)
-                                                elif "plot_base64" in tool_result:
-                                                    response_data["plot_base64"] = (
-                                                        tool_result["plot_base64"]
-                                                    )
-                                            except json.JSONDecodeError:
-                                                # Not JSON, store as text
-                                                debug_entry = {
-                                                    "type": "tool_output",
-                                                    "tool": tool_name,
-                                                    "data": message.content,
-                                                }
-                                                current_debug_info.append(debug_entry)
-                                    except Exception:
-                                        pass
-
-                                # Handle AIMessage (user-facing content)
-                                elif isinstance(message, AIMessage):
-                                    # Check if AI is about to call tools
-                                    has_tool_calls = (
-                                        hasattr(message, "tool_calls")
-                                        and message.tool_calls
-                                        and len(message.tool_calls) > 0
-                                    )
-
-                                    if has_tool_calls:
-                                        status_placeholder.info(
-                                            "🔧 Preparing to execute tools..."
-                                        )
-
-                                    # Show content only if it's not just tool calls
-                                    if hasattr(message, "content") and message.content:
-                                        content = str(message.content)
-                                        # Filter out content that looks like raw tool output
-                                        # (large JSON blocks that are likely debug info)
-                                        if content and content.strip():
-                                            content_stripped = content.strip()
-                                            # Check if content looks like raw tool output
-                                            # (JSON with tool-specific keys like "columns", "dtypes", "stdout", etc.)
-                                            is_raw_tool_output = False
-                                            if (
-                                                content_stripped.startswith("{")
-                                                and content_stripped.endswith("}")
-                                                and len(content_stripped) > 500
-                                            ):
-                                                try:
-                                                    parsed = json.loads(
-                                                        content_stripped
-                                                    )
-                                                    # Check for tool output indicators
-                                                    tool_output_keys = [
-                                                        "columns",
-                                                        "dtypes",
-                                                        "sample_rows",
-                                                        "row_count",
-                                                        "stdout",
-                                                        "error",
-                                                        "result_df_preview",
-                                                        "result_df_row_count",
-                                                    ]
-                                                    if any(
-                                                        key in parsed
-                                                        for key in tool_output_keys
-                                                    ):
-                                                        is_raw_tool_output = True
-                                                except json.JSONDecodeError:
-                                                    pass
-
-                                            if not is_raw_tool_output:
-                                                response_data["full_response"] += (
-                                                    content + "\n\n"
-                                                )
-                                                response_placeholder.markdown(
-                                                    response_data["full_response"]
-                                                )
-                                                # Clear status when we get AI response
-                                                status_placeholder.empty()
-
-            # Clear status at the end
-            status_placeholder.empty()
-
-        # Run async function
-        asyncio.run(stream_response())
-
-        # Extract final values from response_data
-        full_response = response_data["full_response"].strip()
-        plot_path = response_data.get("plot_path")
-        plot_base64 = response_data.get(
-            "plot_base64"
-        )  # Fallback for backward compatibility
-
-        # Display final response
-        if full_response:
-            response_placeholder.markdown(full_response)
-        else:
-            response_placeholder.markdown(
-                "I'm working on your request. Please check the debug information below for details."
-            )
-
-        # Display plot if available (prefer plot_path, fallback to plot_base64)
-        if plot_path:
-            plot_path_obj = Path(plot_path)
-            if plot_path_obj.exists():
-                st.image(str(plot_path_obj), caption="Analysis Plot")
-        elif plot_base64:
-            plot_bytes = base64.b64decode(plot_base64)
-            st.image(plot_bytes, caption="Analysis Plot")
-
-        # Store debug info in session state
-        if current_debug_info:
-            st.session_state.debug_info.append(
-                {
-                    "query": prompt,
-                    "debug_data": current_debug_info,
-                }
-            )
-
-    # Add assistant response to history (only user-facing content)
-    message_to_add = {"role": "assistant", "content": full_response}
-    # Store plot for history (prefer plot_path, fallback to plot_base64)
-    if plot_path:
-        plot_path_obj = Path(plot_path)
-        if plot_path_obj.exists():
-            with open(plot_path_obj, "rb") as f:
-                message_to_add["plot"] = BytesIO(f.read())
-    elif plot_base64:
-        plot_bytes = base64.b64decode(plot_base64)
-        message_to_add["plot"] = BytesIO(plot_bytes)
-    st.session_state.messages.append(message_to_add)
-
-# Sidebar with example queries
+# Sidebar
 with st.sidebar:
+    st.success("✅ Connected to LangGraph Server")
+    st.caption(f"Server: {LANGGRAPH_SERVER_URL}")
+    st.caption(f"Graph: {GRAPH_NAME}")
+    st.caption(f"Assistant ID: {assistant_id}")
+
+    st.markdown("---")
     st.header("Example Queries")
     example_queries = [
-        "How does the number of patients vary from January to July 2025 in Tokyo?",
-        "Generate a line plot of the number of patients from May to August 2024 in each prefecture of the Kanto region.",
+        "How does the number of patients vary from January to July 2022 in Tokyo?",
+        "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
         "What characteristics does the patient count data have overall?",
-        "Show me the top 5 prefectures with the highest total cases in 2024.",
-        "Compare the patient counts between Tokyo and Osaka over time.",
+        "Can you model the Tokyo's covid case and tell me the model clearly?",
     ]
 
     for query in example_queries:
@@ -325,13 +203,146 @@ with st.sidebar:
     st.markdown("---")
     if st.button("Clear Chat History"):
         st.session_state.messages = []
-        st.session_state.debug_info = []
         st.rerun()
 
-    # Show debug info count
-    if st.session_state.debug_info:
-        st.markdown("---")
-        st.info(f"🔧 {len(st.session_state.debug_info)} debug session(s) available")
-        if st.button("Clear Debug Info"):
-            st.session_state.debug_info = []
-            st.rerun()
+
+# Display chat history
+# Simple rule: if last message is from user, don't show the previous assistant message
+for i, message in enumerate(st.session_state.messages):
+    # Skip the previous assistant message if we're waiting for a response
+    if (
+        i == len(st.session_state.messages) - 2
+        and message.get("role") == "assistant"
+        and st.session_state.messages[-1].get("role") == "user"
+    ):
+        continue
+
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "plot" in message:
+            st.image(message["plot"], caption="Analysis Plot")
+
+
+# Chat input
+if prompt := st.chat_input("Ask a question about the data..."):
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Track when this query started (for plot detection)
+    query_start_time = time.time()
+
+    # Get agent response
+    with st.chat_message("assistant"):
+        response_placeholder = st.empty()
+        status_placeholder = st.empty()
+        status_placeholder.info("🤔 Processing your request...")
+
+        try:
+            # Ensure thread exists
+            thread_id = get_or_create_thread(st.session_state.thread_id)
+
+            # Create run
+            run_data = create_run(
+                thread_id,
+                {"messages": [{"role": "human", "content": prompt}]},
+                assistant_id,
+            )
+            run_id = run_data.get("run_id") or run_data.get("id")
+
+            if not run_id:
+                st.error(f"Failed to get run ID from response: {run_data}")
+                st.stop()
+
+            # Stream events
+            accumulated_content = ""
+            current_event_type = None
+
+            for line in stream_run_events(thread_id, run_id).iter_lines():
+                if line:
+                    line_str = line.decode("utf-8")
+
+                    if line_str.startswith("event: "):
+                        current_event_type = line_str[7:].strip()
+                    elif line_str.startswith("data: "):
+                        data_str = line_str[6:]
+                        try:
+                            event_data = json.loads(data_str)
+
+                            if current_event_type == "values":
+                                if "messages" in event_data:
+                                    # Check for tool calls to update status
+                                    for msg in event_data["messages"]:
+                                        if msg.get("type") == "ai":
+                                            tool_calls = msg.get("tool_calls", [])
+                                            if tool_calls and len(tool_calls) > 0:
+                                                tool_name = tool_calls[0].get(
+                                                    "name", "tool"
+                                                )
+                                                if isinstance(tool_name, dict):
+                                                    tool_name = tool_name.get(
+                                                        "name", "tool"
+                                                    )
+
+                                                if tool_name == "get_dataset_schema":
+                                                    status_placeholder.info(
+                                                        "📊 Examining dataset structure..."
+                                                    )
+                                                elif tool_name == "run_covid_analysis":
+                                                    status_placeholder.info(
+                                                        "⚙️ Executing analysis and generating results..."
+                                                    )
+                                                else:
+                                                    status_placeholder.info(
+                                                        f"🔧 Using {tool_name}..."
+                                                    )
+
+                                            # Extract AI message content
+                                            content = msg.get("content", "")
+                                            if content and content.strip():
+                                                if content != accumulated_content:
+                                                    accumulated_content = content
+                                                    response_placeholder.markdown(
+                                                        accumulated_content
+                                                    )
+                                                    status_placeholder.empty()
+
+                            current_event_type = None
+                        except json.JSONDecodeError:
+                            pass
+
+            full_response = accumulated_content.strip()
+            status_placeholder.empty()
+
+            # Check for plot files created after query start
+            plot_path = None
+            img_dir = project_root / "img"
+            if img_dir.exists():
+                plot_files = sorted(
+                    img_dir.glob("plot_*.png"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for plot_file in plot_files:
+                    if plot_file.stat().st_mtime >= query_start_time:
+                        plot_path = plot_file
+                        st.image(str(plot_path), caption="Analysis Plot")
+                        break
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+            full_response = f"Error: {str(e)}"
+
+        # Display final response
+        if full_response:
+            response_placeholder.markdown(full_response)
+        else:
+            response_placeholder.markdown("I'm working on your request...")
+
+    # Add assistant response to history
+    message_to_add = {"role": "assistant", "content": full_response}
+    if plot_path and plot_path.exists():
+        with open(plot_path, "rb") as f:
+            message_to_add["plot"] = BytesIO(f.read())
+    st.session_state.messages.append(message_to_add)
