@@ -1,7 +1,16 @@
-"""Entry point for running the LangGraph server as a module.
+"""Entry point for running the LangGraph agent in CLI mode.
+
+Note: To run the LangGraph Server (HTTP API), use:
+    langgraph dev
+
+This module only provides CLI mode for direct interaction.
 
 Usage:
+    # Interactive mode
     python -m src.langgraph_server
+
+    # Single query
+    python -m src.langgraph_server "Your query here"
 """
 
 import asyncio
@@ -152,7 +161,7 @@ async def run_single_query(query: str, thread_id: str = "default-thread"):
 
 
 def main():
-    """Main entry point for LangGraph server."""
+    """Main entry point for CLI mode."""
     if len(sys.argv) > 1:
         # Non-interactive mode: run a single query
         query = " ".join(sys.argv[1:])

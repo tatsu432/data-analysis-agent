@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, TypedDict
 
 from .mcp_tool_loader import MCPToolLoader
 from .prompts import ANALYSIS_PROMPT
@@ -151,6 +151,28 @@ async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1)
 
     logger.info("Agent graph created successfully")
     return app
+
+
+# Cache for the compiled graph to avoid recreating it
+_graph_cache = None
+
+
+# LangGraph Server entry point - can be async or sync
+async def graph():
+    """
+    Entry point for LangGraph Server.
+    This function is called by `langgraph dev` to get the graph.
+
+    Returns:
+        Compiled LangGraph StateGraph
+    """
+    global _graph_cache
+
+    # Cache the graph to avoid recreating it on every call
+    if _graph_cache is None:
+        _graph_cache = await create_agent()
+
+    return _graph_cache
 
 
 def should_continue(state: AgentState) -> Literal["continue", "end"]:
