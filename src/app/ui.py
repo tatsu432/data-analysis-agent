@@ -310,11 +310,10 @@ if prompt := st.chat_input("Ask a question about the data..."):
 with st.sidebar:
     st.header("Example Queries")
     example_queries = [
-        "How does the number of patients vary from January to July 2025 in Tokyo?",
-        "Generate a line plot of the number of patients from May to August 2024 in each prefecture of the Kanto region.",
+        "How does the number of patients vary from January to July 2022 in Tokyo?",
+        "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
         "What characteristics does the patient count data have overall?",
-        "Show me the top 5 prefectures with the highest total cases in 2024.",
-        "Compare the patient counts between Tokyo and Osaka over time.",
+        "Can you model the Tokyo's covid case and tell me the model clearly?",
     ]
 
     for query in example_queries:

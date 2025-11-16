@@ -71,7 +71,9 @@ project-root/
 │ │ ├── graph.py # LangGraph agent definition
 │ │ ├── prompts.py # Agent prompts and reasoning steps
 │ │ ├── mcp_tool_loader.py # Loads tools from MCP server
-│ │ └── settings.py # LangGraph server settings
+│ │ ├── settings.py # LangGraph server settings
+│ │ ├── __main__.py # Entry point for running the agent
+│ │ └── generate_diagram.py # Script to generate workflow diagram
 │ │
 │ ├── mcp_server/
 │ │ ├── server.py # FastMCP server entry point
@@ -81,11 +83,7 @@ project-root/
 │ │
 │ ├── app/
 │ │ └── ui.py # Streamlit UI
-│ │
-│ ├── main.py # Main entry point
-│ └── generate_workflow_diagram.py # Script to generate workflow diagram
 │
-├── run_mcp_server.py # Script to start the MCP server
 └── README.md
 ```
 
@@ -187,11 +185,7 @@ DATA_ANALYSIS_MCP_SERVER_URL=http://localhost:8082/mcp  # Default MCP server URL
 
 In one terminal, start the MCP server:
 ```bash
-# Option 1: Run as a module (recommended)
 python -m src.mcp_server
-
-# Option 2: Use the convenience script
-python run_mcp_server.py
 ```
 
 The MCP server will start on port 8082 by default (configurable via `PORT` environment variable).
@@ -202,11 +196,7 @@ In another terminal, run the agent:
 
 **Interactive mode:**
 ```bash
-# Option 1: Run as a module (recommended)
 python -m src.langgraph_server
-
-# Option 2: Use the convenience wrapper
-python -m src.main
 ```
 
 **Single query:**
@@ -223,6 +213,30 @@ python -m src.langgraph_server "How does the number of patients vary from Januar
    ```
    
    The Streamlit app will open in your browser automatically.
+
+### 5. Generate Workflow Diagram (Optional)
+
+To generate a visual diagram of the agent workflow:
+
+```bash
+python -m src.langgraph_server.generate_diagram
+```
+
+Options:
+- `--output` or `-o`: Specify output file path (default: `agent_workflow.png`)
+- `--format` or `-f`: Specify format - `png`, `svg`, or `mermaid` (default: `png`)
+
+Examples:
+```bash
+# Generate PNG diagram
+python -m src.langgraph_server.generate_diagram
+
+# Generate SVG diagram
+python -m src.langgraph_server.generate_diagram --format svg
+
+# Custom output path
+python -m src.langgraph_server.generate_diagram --output my_workflow.png
+```
 
 ---
 
