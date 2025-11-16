@@ -203,9 +203,15 @@ The MCP server will start on port 8082 by default (configurable via `PORT` envir
 
 **Terminal 2 - LangGraph Server:**
 ```bash
-langgraph dev
+langgraph dev --config src/langgraph_server/langgraph.json
 ```
 The LangGraph Server will start on port 2024 by default (configurable via `--port` flag).
+
+Alternatively, you can run from the `langgraph_server` directory:
+```bash
+cd src/langgraph_server
+langgraph dev
+```
 This provides the official LangGraph Server API with endpoints like `/threads`, `/runs`, `/messages`.
 
 **Terminal 3 - Streamlit UI:**

@@ -1,9 +1,10 @@
 {
   "dependencies": [
-    "."
+    "../.."
   ],
   "graphs": {
     "data_analysis_agent": "src.langgraph_server.graph:graph"
   },
-  "env": ".env"
+  "env": "../../.env"
 }
+
