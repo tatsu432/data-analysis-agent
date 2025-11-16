@@ -1,4 +1,4 @@
-"""Tool to execute Python code for COVID-19 data analysis."""
+"""MCP tools for data analysis."""
 
 import io
 import logging
@@ -11,7 +11,10 @@ from typing import Any, Dict
 import matplotlib
 import numpy as np
 import pandas as pd
+from fastmcp import FastMCP
 from PIL import Image
+
+from .schema import AnalysisResultOutput, DatasetSchemaOutput
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,9 @@ import matplotlib.pyplot as plt  # noqa: E402 - Must import after setting backen
 
 # Set ggplot style for all plots
 plt.style.use("ggplot")
+
+# Create FastMCP instance
+analysis_mcp = FastMCP("data_analysis_mcp")
 
 
 def _detect_and_convert_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -155,7 +161,80 @@ def _validate_plot(plot_path: Path) -> Dict[str, Any]:
         }
 
 
-def run_covid_analysis(code: str) -> Dict[str, Any]:
+@analysis_mcp.tool(
+    name="get_dataset_schema",
+    description="Get schema information about the COVID-19 dataset including columns, data types, and sample rows.",
+)
+def get_dataset_schema() -> DatasetSchemaOutput:
+    """
+    Returns schema information about the COVID-19 dataset.
+
+    Returns:
+        DatasetSchemaOutput with columns, dtypes, sample rows, and row count
+    """
+    logger.info("=" * 60)
+    logger.info("TOOL EXECUTION: get_dataset_schema")
+    logger.info("=" * 60)
+    logger.info("INPUT - No parameters required")
+
+    # Get the path to the CSV file
+    # __file__ is in src/mcp_server/analysis_tools.py
+    # So we need to go up 3 levels: mcp_server -> src -> project_root
+    project_root = Path(__file__).parent.parent.parent
+    csv_path = project_root / "data" / "newly_confirmed_cases_daily.csv"
+
+    # Load the dataset
+    logger.info(f"Loading dataset from: {csv_path}")
+    df = pd.read_csv(csv_path)
+    logger.info(f"Dataset loaded: {len(df)} rows, {len(df.columns)} columns")
+
+    # Use the same datetime conversion function as execution tool for consistency
+    df = _detect_and_convert_datetime_columns(df)
+
+    # Get column information
+    columns = df.columns.tolist()
+    dtypes = {col: str(dtype) for col, dtype in df.dtypes.items()}
+
+    # Get sample rows (first 5)
+    sample_df = df.head(5)
+    sample_rows = sample_df.to_dict(orient="records")
+
+    # Convert date-like columns and NaN values to strings/None for JSON serialization
+    for row in sample_rows:
+        for key, value in row.items():
+            if pd.isna(value):
+                row[key] = None
+            elif isinstance(value, (pd.Timestamp, pd.Timedelta)):
+                row[key] = str(value)
+            elif isinstance(value, (int, float)) and pd.isna(value):
+                row[key] = None
+
+    result = DatasetSchemaOutput(
+        columns=columns,
+        dtypes=dtypes,
+        sample_rows=sample_rows,
+        row_count=len(df),
+        description="COVID-19 newly confirmed cases daily data for Japanese prefectures",
+    )
+
+    logger.info("OUTPUT SUMMARY:")
+    logger.info(f"  - Columns: {len(columns)}")
+    logger.info(f"  - Row count: {len(df)}")
+    logger.info(f"  - Sample rows: {len(sample_rows)}")
+    logger.debug(f"  - Column names: {columns}")
+    logger.info("=" * 60)
+
+    return result
+
+
+@analysis_mcp.tool(
+    name="run_covid_analysis",
+    description="Execute Python code for COVID-19 data analysis. The dataset is available as `df`. "
+    "Date columns are automatically converted to datetime. Use pandas, numpy, and matplotlib.pyplot. "
+    "Assign results to `result_df` and save plots using plt.savefig(plot_filename) where plot_filename "
+    "is a variable provided in the execution environment.",
+)
+def run_covid_analysis(code: str) -> AnalysisResultOutput:
     """
     Executes Python code in a controlled environment with the COVID dataset loaded.
 
@@ -171,19 +250,7 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
         code: Python code string to execute
 
     Returns:
-        Dictionary containing:
-        - stdout: captured standard output
-        - error: error message if execution failed
-        - result_df_preview: preview of result_df if defined (first 10 rows)
-        - result_df_row_count: number of rows in result_df if defined
-        - plot_valid: boolean indicating if plot is valid and contains data
-        - plot_validation_message: message about plot validation
-        - plot_path: absolute path to the saved plot file (if plot was created)
-        - success: boolean indicating if execution succeeded
-
-        Note: The plot file is saved to the project root directory and kept for user access.
-        The UI layer can load the plot directly from plot_path. Base64 encoding is not used
-        to save tokens and computation.
+        AnalysisResultOutput containing execution results
     """
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: run_covid_analysis")
@@ -196,7 +263,9 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
     plot_basename = f"plot_{timestamp}.png"
 
     # Get the path to the CSV file
-    project_root = Path(__file__).parent.parent.parent.parent
+    # __file__ is in src/mcp_server/analysis_tools.py
+    # So we need to go up 3 levels: mcp_server -> src -> project_root
+    project_root = Path(__file__).parent.parent.parent
     csv_path = project_root / "data" / "newly_confirmed_cases_daily.csv"
 
     # Ensure img directory exists
@@ -384,4 +453,4 @@ def run_covid_analysis(code: str) -> Dict[str, Any]:
             logger.debug(f"  - error content:\n{result['error']}")
         logger.info("=" * 60)
 
-    return result
+    return AnalysisResultOutput(**result)

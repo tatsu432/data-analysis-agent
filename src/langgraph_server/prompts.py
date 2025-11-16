@@ -69,3 +69,4 @@ ANALYSIS_PROMPT = ChatPromptTemplate.from_messages(
         MessagesPlaceholder(variable_name="messages"),
     ]
 )
+

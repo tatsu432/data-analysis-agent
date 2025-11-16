@@ -2,20 +2,19 @@
 
 import logging
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import BaseMessage
-from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, TypedDict
 
+from .mcp_tool_loader import MCPToolLoader
 from .prompts import ANALYSIS_PROMPT
-from .tools import get_dataset_schema, run_covid_analysis
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +22,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
 
 load_dotenv()
 
@@ -35,72 +33,7 @@ class AgentState(TypedDict):
     retry_count: NotRequired[int]
 
 
-# Convert functions to LangChain tools
-@tool
-def get_dataset_schema_tool() -> dict:
-    """Get schema information about the COVID-19 dataset including columns, data types, and sample rows."""
-    logger.info("Tool called: get_dataset_schema_tool")
-    try:
-        result = get_dataset_schema()
-        logger.info("Tool completed: get_dataset_schema_tool")
-        return result
-    except Exception as e:
-        logger.error(
-            f"Tool failed: get_dataset_schema_tool - {type(e).__name__}: {str(e)}"
-        )
-        raise
-
-
-@tool
-def run_covid_analysis_tool(code: str) -> dict:
-    """
-    Execute Python code for COVID-19 data analysis.
-
-    Args:
-        code: Python code string to execute. The dataset is available as `df`.
-              Date columns are automatically converted to datetime.
-              Use pandas, numpy, and matplotlib.pyplot. Assign results to `result_df`
-              and save plots using plt.savefig(plot_filename) where plot_filename is
-              a variable provided in the execution environment (e.g., 'plot_20251115_212901.png').
-
-    Returns:
-        Dictionary with execution results including:
-        - stdout: captured standard output
-        - error: error or warning messages (check this!)
-        - result_df_preview: preview of result_df (first 10 rows)
-        - result_df_row_count: number of rows in result_df (check if 0!)
-        - plot_valid: boolean indicating if plot contains data (check this!)
-        - plot_validation_message: message about plot validation
-        - plot_path: absolute path to the saved plot file (if plot was created)
-        - success: boolean indicating if execution succeeded
-
-        IMPORTANT: Always check result_df_row_count and plot_valid before interpreting results.
-        If result_df_row_count is 0 or plot_valid is False, your query returned no data.
-
-        Note: The plot file is saved to the img/ directory. When a plot is successfully
-        created, inform the user about the plot file location (plot_path) so they can access it.
-
-        Note: plot_base64 is excluded from the return value to save tokens. The UI layer
-        can load the plot directly from plot_path if needed.
-    """
-    logger.info("Tool called: run_covid_analysis_tool")
-    logger.info(f"Tool input - code length: {len(code)} characters")
-    try:
-        result = run_covid_analysis(code)
-        # Remove plot_base64 to save tokens - LLM doesn't need to see the image
-        # The UI layer can load the plot from plot_path if needed
-        if "plot_base64" in result:
-            del result["plot_base64"]
-        logger.info("Tool completed: run_covid_analysis_tool")
-        return result
-    except Exception as e:
-        logger.error(
-            f"Tool failed: run_covid_analysis_tool - {type(e).__name__}: {str(e)}"
-        )
-        raise
-
-
-def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
+async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
     """
     Create the data analysis agent graph.
 
@@ -113,6 +46,11 @@ def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
     """
     logger.info(f"Creating agent with model: {model_name}")
 
+    # Load MCP tools
+    mcp_tool_loader = MCPToolLoader()
+    # Load tools once and keep them for the agent lifetime
+    tools = await mcp_tool_loader._load_all_servers()
+
     # Initialize the LLM
     llm = init_chat_model(
         model=model_name,
@@ -121,7 +59,6 @@ def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
     )
 
     # Bind tools to the LLM
-    tools = [get_dataset_schema_tool, run_covid_analysis_tool]
     llm_with_tools = llm.bind_tools(tools)
 
     # Create call_model function with access to llm_with_tools
@@ -155,9 +92,9 @@ def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
     # Create the graph
     workflow = StateGraph(AgentState)
 
-    # Create a custom tool node wrapper for logging
-    def call_tools(state: AgentState):
-        """Call tools with logging."""
+    # Create a custom async tool node wrapper for logging
+    async def call_tools(state: AgentState):
+        """Call tools with logging (async to support MCP tools)."""
         logger.info("=" * 60)
         logger.info("NODE: tools (ToolNode)")
         messages = state["messages"]
@@ -175,9 +112,9 @@ def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
                 logger.info(f"  - Tool: {tool_name}")
                 logger.debug(f"    Args: {tool_args}")
 
-        # Use ToolNode to execute tools
+        # Use ToolNode to execute tools (async for MCP tools)
         tool_node = ToolNode(tools)
-        result = tool_node.invoke(state)
+        result = await tool_node.ainvoke(state)
 
         # Log tool results
         if "messages" in result:
@@ -216,6 +153,28 @@ def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
     return app
 
 
+# Cache for the compiled graph to avoid recreating it
+_graph_cache = None
+
+
+# LangGraph Server entry point - can be async or sync
+async def graph():
+    """
+    Entry point for LangGraph Server.
+    This function is called by `langgraph dev` to get the graph.
+
+    Returns:
+        Compiled LangGraph StateGraph
+    """
+    global _graph_cache
+
+    # Cache the graph to avoid recreating it on every call
+    if _graph_cache is None:
+        _graph_cache = await create_agent()
+
+    return _graph_cache
+
+
 def should_continue(state: AgentState) -> Literal["continue", "end"]:
     """Determine whether to continue or end based on the last message."""
     messages = state["messages"]
@@ -248,8 +207,8 @@ def generate_workflow_diagram(
         Path to the generated diagram file
 
     Example:
-        >>> from src.agent.graph import create_agent, generate_workflow_diagram
-        >>> app = create_agent()
+        >>> from src.langgraph_server.graph import create_agent, generate_workflow_diagram
+        >>> app = await create_agent()
         >>> diagram_path = generate_workflow_diagram(app, "workflow.png")
         >>> print(f"Diagram saved to {diagram_path}")
     """
