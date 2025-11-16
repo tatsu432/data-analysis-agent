@@ -38,4 +38,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Failed to start MCP server: {e}")
         sys.exit(1)
-

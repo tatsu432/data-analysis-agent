@@ -2,7 +2,7 @@
 
 This project is a 20-hour prototype demonstrating an LLM-powered data analysis agent that can answer analytical questions by generating Python code, executing it, analyzing the results, and responding in natural language.
 
-The goal is to show how an agent can perform end-to-end analysis on internal datasets (such as S3 or Redshift) in the future. For the prototype, the agent operates on a single local CSV file containing COVID-19 patient counts for each prefecture in Japan.
+The goal is to show how an agent can perform end-to-end analysis on internal datasets (such as S3 or Redshift) in the future. For the prototype, the agent operates on multiple local CSV files including COVID-19 patient counts for Japanese prefectures and patient data.
 
 ---
 
@@ -43,15 +43,16 @@ High-Level Components:
 
 - **MCP Server** (`src/mcp_server/`)  
   - FastMCP server exposing data analysis tools
-- Execution Tool (`run_covid_analysis`)  
-  - loads the COVID dataset into a predefined dataframe `df`  
-  - executes generated Python code safely  
-  - returns previews and plots  
-- Dataset Tool (`get_dataset_schema`)  
-  - returns column names  
-  - datatypes  
-  - sample rows  
-    - used to condition the agent's code generation  
+  - Dataset Registry: Centralized registry of available datasets with metadata
+  - Execution Tool (`run_analysis`)  
+    - loads one or more datasets into dataframes  
+    - executes generated Python code safely  
+    - returns previews and plots  
+    - supports multi-dataset analysis
+  - Dataset Tools:
+    - `list_datasets`: Lists all available datasets with their IDs and descriptions
+    - `get_dataset_schema(dataset_id)`: Returns column names, datatypes, and sample rows for a specific dataset
+  - Legacy Tool (`run_covid_analysis`): Deprecated wrapper for backwards compatibility  
 
 The architecture follows a separation of concerns pattern where:
 - MCP tools are defined in `mcp_server/` and exposed via FastMCP
@@ -64,7 +65,8 @@ The architecture follows a separation of concerns pattern where:
 project-root/
 │
 ├── data/
-│ └── newly_confirmed_cases_daily.csv
+│ ├── newly_confirmed_cases_daily.csv
+│ └── jpm_patient_data.csv
 │
 ├── src/
 │ ├── langgraph_server/
@@ -77,7 +79,8 @@ project-root/
 │ │
 │ ├── mcp_server/
 │ │ ├── server.py # FastMCP server entry point
-│ │ ├── analysis_tools.py # MCP tools (get_dataset_schema, run_covid_analysis)
+│ │ ├── analysis_tools.py # MCP tools (list_datasets, get_dataset_schema, run_analysis)
+│ │ ├── datasets_registry.py # Dataset registry with metadata
 │ │ ├── schema.py # Pydantic schemas for tool inputs/outputs
 │ │ ├── settings.py # MCP server settings
 │ │ └── __main__.py # Entry point for running the MCP server
@@ -92,29 +95,82 @@ project-root/
 
 ## Tools
 
-### `get_dataset_schema()`
+### `list_datasets()`
 
-Returns:
-- Column names  
-- Inferred dtypes  
-- First N rows (JSON)
+Returns a list of all available datasets with:
+- Dataset IDs
+- Descriptions
+- Code aliases (variable names for use in code)
+- File paths
 
-Helps the agent avoid hallucinating nonexistent columns or datatypes.
+Use this to discover which datasets are available for analysis.
 
 ---
 
-### `run_covid_analysis(code: str)`
+### `get_dataset_schema(dataset_id: str)`
 
-Executes generated Python code in a controlled environment.
+Returns schema information for a specific dataset:
+- Column names  
+- Inferred dtypes  
+- First 5 rows (JSON)
+- Row count
+- Dataset description
 
-Execution rules:
-- The CSV is loaded as `df`
+Helps the agent avoid hallucinating nonexistent columns or datatypes.
+
+**Example**: `get_dataset_schema("covid_new_cases_daily")` or `get_dataset_schema("jpm_patient_data")`
+
+---
+
+### `run_analysis(code: str, dataset_ids: list[str], primary_dataset_id: str | None = None)`
+
+Executes generated Python code in a controlled environment with one or more datasets.
+
+**Parameters:**
+- `code`: Python code string to execute
+- `dataset_ids`: List of dataset IDs to load (e.g., `["covid_new_cases_daily"]` or `["jpm_patient_data", "covid_new_cases_daily"]`)
+- `primary_dataset_id`: Optional primary dataset ID (if provided, this dataset is available as `df`)
+
+**Dataset Access in Code:**
+- Primary dataset: If `primary_dataset_id` is specified, available as `df`
+- Single dataset: If only one dataset is loaded, automatically available as `df`
+- All datasets: Access via `dfs[dataset_id]` dictionary
+- Code aliases: Each dataset has a code_name (e.g., `df_covid_daily`, `df_jpm_patients`)
+
+**Execution rules:**
 - Allowed imports: pandas, numpy, matplotlib.pyplot
+- Date columns are automatically converted to datetime
 - Captures:
   - stdout  
   - error  
   - preview of `result_df` if defined  
-  - saved plot with timestamped filename (e.g., `plot_20251115_212901.png`) if created  
+  - saved plot with timestamped filename (e.g., `plot_20251115_212901.png`) if created
+
+**Example for single dataset:**
+```python
+run_analysis(
+    code="result_df = df.head(10)",
+    dataset_ids=["covid_new_cases_daily"],
+    primary_dataset_id="covid_new_cases_daily"
+)
+```
+
+**Example for multiple datasets:**
+```python
+run_analysis(
+    code="merged = df_jpm_patients.merge(df_covid_daily, on='date', how='left'); result_df = merged.head(10)",
+    dataset_ids=["jpm_patient_data", "covid_new_cases_daily"],
+    primary_dataset_id="jpm_patient_data"
+)
+```
+
+---
+
+### `run_covid_analysis(code: str)` (DEPRECATED)
+
+**DEPRECATED**: This tool is deprecated and will be removed in a future version. Use `run_analysis` instead.
+
+Backwards-compatible wrapper that calls `run_analysis` with the COVID dataset. Kept for compatibility with existing code.  
 
 ---
 
@@ -144,7 +200,8 @@ You can ask:
 - Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.
 - What characteristics does the patient count data have overall?
 - Can you model the Tokyo's covid case and tell me the model clearly?
-
+- Can you compare the each product's number of patients over the time for GP only?
+- Can you generate the line plots of the number of the patients for each product only for those at risk over the time?
 ---
 
 
