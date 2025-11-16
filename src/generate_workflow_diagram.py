@@ -12,11 +12,13 @@ src_dir = Path(__file__).parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
-from agent.graph import create_agent, generate_workflow_diagram
+import asyncio
+
+from langgraph_server.graph import create_agent, generate_workflow_diagram
 
 if __name__ == "__main__":
     print("Creating agent...")
-    app = create_agent()
+    app = asyncio.run(create_agent())
 
     print("Generating workflow diagram...")
     # Generate PNG diagram

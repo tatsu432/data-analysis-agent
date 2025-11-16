@@ -30,7 +30,7 @@ from langchain_core.messages import (  # noqa: E402
     ToolMessage,
 )
 
-from src.agent.graph import create_agent  # noqa: E402
+from src.langgraph_server.graph import create_agent  # noqa: E402
 
 # Load environment variables
 load_dotenv()
@@ -48,7 +48,7 @@ st.markdown("Ask questions about COVID-19 data for Japanese prefectures")
 # Initialize session state
 if "agent" not in st.session_state:
     with st.spinner("Initializing agent..."):
-        st.session_state.agent = create_agent()
+        st.session_state.agent = asyncio.run(create_agent())
         st.session_state.thread_id = "streamlit-session"
         st.session_state.messages = []
         st.session_state.debug_info = []  # Store debug/technical information

@@ -34,24 +34,28 @@ This provides a clear vertical slice of an “LLM analyst” workflow and is des
 
 High-Level Components:
 
-- LangGraph agent  
-  - interprets queries  
+- **LangGraph Server** (`src/langgraph_server/`)  
+  - LangGraph agent that interprets queries  
   - writes Python code  
   - retries on errors  
   - summarizes results  
+  - loads tools from MCP server via `langchain-mcp-adapters`
 
-- Execution Tool (`run_covid_analysis`)  
-  - loads the COVID dataset into a predefined dataframe `df`  
-  - executes generated Python code safely  
-  - returns previews and plots  
+- **MCP Server** (`src/mcp_server/`)  
+  - FastMCP server exposing data analysis tools
+  - Execution Tool (`run_covid_analysis`)  
+    - loads the COVID dataset into a predefined dataframe `df`  
+    - executes generated Python code safely  
+    - returns previews and plots  
+  - Dataset Tool (`get_dataset_schema`)  
+    - returns column names  
+    - datatypes  
+    - sample rows  
+    - used to condition the agent's code generation  
 
-- Dataset Tool (`get_dataset_schema`)  
-  - returns column names  
-  - datatypes  
-  - sample rows  
-  - used to condition the agent’s code generation  
-
-(Optional: these tools can be served via an MCP server later if needed.)
+The architecture follows a separation of concerns pattern where:
+- MCP tools are defined in `mcp_server/` and exposed via FastMCP
+- LangGraph agent flow is defined in `langgraph_server/` and consumes MCP tools
 
 ---
 
@@ -63,19 +67,25 @@ project-root/
 │ └── newly_confirmed_cases_daily.csv
 │
 ├── src/
-│ ├── agent/
-│ │ ├── graph.py # LangGraph definition
+│ ├── langgraph_server/
+│ │ ├── graph.py # LangGraph agent definition
 │ │ ├── prompts.py # Agent prompts and reasoning steps
-│ │ └── tools/
-│ │ │ ├── execution.py # run_covid_analysis tool
-│ │ │ └── schema.py # get_dataset_schema tool
+│ │ ├── mcp_tool_loader.py # Loads tools from MCP server
+│ │ └── settings.py # LangGraph server settings
+│ │
+│ ├── mcp_server/
+│ │ ├── server.py # FastMCP server entry point
+│ │ ├── analysis_tools.py # MCP tools (get_dataset_schema, run_covid_analysis)
+│ │ ├── schema.py # Pydantic schemas for tool inputs/outputs
+│ │ └── settings.py # MCP server settings
 │ │
 │ ├── app/
-│ │ └── ui.py # Optional Streamlit or FastAPI UI
+│ │ └── ui.py # Streamlit UI
 │ │
 │ ├── main.py # Main entry point
 │ └── generate_workflow_diagram.py # Script to generate workflow diagram
 │
+├── run_mcp_server.py # Script to start the MCP server
 └── README.md
 ```
 
@@ -131,10 +141,10 @@ If execution errors occur:
 
 You can ask:
 
-- “How does the number of patients vary from January to July 2022 in Tokyo?”
-- “Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.”
-- “What characteristics does the patient count data have overall?”
-- "Can you model the Tokyo's covid case and tell me the model clearly?"
+- How does the number of patients vary from January to July 2022 in Tokyo?
+- Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.
+- What characteristics does the patient count data have overall?
+- Can you model the Tokyo's covid case and tell me the model clearly?
 
 ---
 
@@ -150,3 +160,82 @@ You can ask:
 - Notebook-style report generation
 
 This prototype is intentionally simple but complete, demonstrating the viability of LLM-driven data analysis workflows.
+
+---
+
+## Setup and Running
+
+### 1. Install Dependencies
+
+```bash
+# Using uv (recommended)
+uv sync
+
+# Or using pip
+pip install -e .
+```
+
+### 2. Set Environment Variables
+
+Create a `.env` file with:
+```bash
+OPENAI_API_KEY=your_openai_api_key
+DATA_ANALYSIS_MCP_SERVER_URL=http://localhost:8082/mcp  # Default MCP server URL (must include /mcp path)
+```
+
+### 3. Start the MCP Server
+
+In one terminal, start the MCP server:
+```bash
+# Option 1: Run as a module (recommended)
+python -m src.mcp_server
+
+# Option 2: Use the convenience script
+python run_mcp_server.py
+```
+
+The MCP server will start on port 8082 by default (configurable via `PORT` environment variable).
+
+### 4. Run the Agent
+
+In another terminal, run the agent:
+
+**Interactive mode:**
+```bash
+# Option 1: Run as a module (recommended)
+python -m src.langgraph_server
+
+# Option 2: Use the convenience wrapper
+python -m src.main
+```
+
+**Single query:**
+```bash
+python -m src.langgraph_server "How does the number of patients vary from January to July 2025 in Tokyo?"
+```
+
+**Streamlit UI:**
+
+1. Make sure the MCP server is running (see step 3 above)
+2. In a new terminal, run:
+   ```bash
+   streamlit run src/app/ui.py
+   ```
+   
+   The Streamlit app will open in your browser automatically.
+
+---
+
+## Architecture Notes
+
+The project follows a clean separation of concerns:
+
+- **MCP Server** (`src/mcp_server/`): Defines and exposes tools via FastMCP. Tools are independent and can be reused by other agents or services.
+
+- **LangGraph Server** (`src/langgraph_server/`): Defines the agent workflow and consumes MCP tools. The agent doesn't need to know about tool implementation details, only their interfaces.
+
+This architecture makes it easy to:
+- Add new tools by extending the MCP server
+- Reuse tools across different agents
+- Test tools independently
+- Scale tools as separate services
