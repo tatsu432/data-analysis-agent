@@ -27,8 +27,10 @@ from sklearn import (
     preprocessing,
 )
 
+from .dataset_store import DatasetStore
 from .datasets_registry import DATASETS
 from .schema import AnalysisResultOutput, DatasetSchemaOutput
+from .utils import detect_and_convert_datetime_columns
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,9 @@ plt.style.use("ggplot")
 
 # Create FastMCP instance
 analysis_mcp = FastMCP("data_analysis_mcp")
+
+# Initialize dataset store
+dataset_store = DatasetStore(DATASETS)
 
 # Mapping of deprecated seaborn styles to valid alternatives
 DEPRECATED_STYLE_MAPPING = {
@@ -167,58 +172,9 @@ def _get_valid_style_fallback(style_name: str) -> str:
         return "default"
 
 
-def _detect_and_convert_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Automatically detect and convert time series columns to datetime.
-
-    Args:
-        df: DataFrame to process
-
-    Returns:
-        DataFrame with datetime columns converted
-    """
-    df = df.copy()
-
-    # Common date column names
-    date_column_names = [
-        "Date",
-        "date",
-        "DATE",
-        "time",
-        "Time",
-        "TIME",
-        "timestamp",
-        "Timestamp",
-        "TIMESTAMP",
-    ]
-
-    # Try to convert known date column names
-    for col in df.columns:
-        if col in date_column_names:
-            try:
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-            except Exception:
-                pass
-
-    # Also try to detect date-like columns by name patterns
-    for col in df.columns:
-        if col not in date_column_names:
-            # Check if column name contains date-related keywords
-            col_lower = col.lower()
-            if any(
-                keyword in col_lower
-                for keyword in ["date", "time", "day", "month", "year"]
-            ):
-                try:
-                    # Try to convert, but don't fail if it doesn't work
-                    converted = pd.to_datetime(df[col], errors="coerce")
-                    # Only convert if most values are successfully parsed
-                    if converted.notna().sum() > len(df) * 0.5:
-                        df[col] = converted
-                except Exception:
-                    pass
-
-    return df
+# _detect_and_convert_datetime_columns moved to utils.py
+# Imported as detect_and_convert_datetime_columns for backward compatibility
+_detect_and_convert_datetime_columns = detect_and_convert_datetime_columns
 
 
 def _validate_plot(plot_path: Path) -> Dict[str, Any]:
@@ -315,15 +271,43 @@ def list_datasets() -> Dict[str, Any]:
     logger.info("TOOL EXECUTION: list_datasets")
     logger.info("=" * 60)
 
-    datasets_list = [
-        {
+    datasets_list = []
+    for ds_id, meta in DATASETS.items():
+        # Get storage information
+        storage = meta.get("storage")
+        if storage:
+            storage_kind = storage.get("kind", "unknown")
+
+            # Build location_hint based on storage kind
+            if storage_kind == "local_csv":
+                path = storage.get("path")
+                location_hint = str(path) if path else "local"
+            elif storage_kind == "s3_csv":
+                bucket = storage.get("bucket", "")
+                key = storage.get("key", "")
+                # Truncate long keys for display
+                if len(key) > 50:
+                    key_display = key[:47] + "..."
+                else:
+                    key_display = key
+                location_hint = (
+                    f"s3://{bucket}/{key_display}" if bucket and key else "s3"
+                )
+            else:
+                location_hint = "unknown"
+        else:
+            # Backward compatibility: use path if available
+            storage_kind = "local_csv"  # Assume local if no storage block
+            location_hint = str(meta.get("path", "unknown"))
+
+        dataset_info = {
             "id": ds_id,
-            "description": meta["description"],
+            "description": meta.get("description", ""),
             "code_name": meta.get("code_name"),
-            "path": str(meta["path"]),
+            "storage_kind": storage_kind,
+            "location_hint": location_hint,
         }
-        for ds_id, meta in DATASETS.items()
-    ]
+        datasets_list.append(dataset_info)
 
     result = {"datasets": datasets_list}
 
@@ -356,63 +340,27 @@ def get_dataset_schema(dataset_id: str) -> DatasetSchemaOutput:
     logger.info("=" * 60)
     logger.info(f"INPUT - dataset_id: {dataset_id}")
 
-    # Validate dataset_id
-    if dataset_id not in DATASETS:
-        available_ids = ", ".join(DATASETS.keys())
-        error_msg = (
-            f"Dataset '{dataset_id}' not found. "
-            f"Available datasets: {available_ids}. "
-            f"Use list_datasets() to see all available datasets."
-        )
+    # Use DatasetStore to get schema (handles validation and loading)
+    try:
+        result = dataset_store.get_schema(dataset_id)
+
+        logger.info("OUTPUT SUMMARY:")
+        logger.info(f"  - Columns: {len(result.columns)}")
+        logger.info(f"  - Row count: {result.row_count}")
+        logger.info(f"  - Sample rows: {len(result.sample_rows)}")
+        logger.debug(f"  - Column names: {result.columns}")
+        logger.info("=" * 60)
+
+        return result
+    except ValueError as e:
+        # Re-raise ValueError as-is (already has good error message)
+        logger.error(str(e))
+        raise
+    except Exception as e:
+        # Wrap other exceptions with context
+        error_msg = f"Failed to get schema for dataset '{dataset_id}': {str(e)}"
         logger.error(error_msg)
-        raise ValueError(error_msg)
-
-    # Get dataset metadata
-    meta = DATASETS[dataset_id]
-    csv_path = meta["path"]
-
-    # Load the dataset
-    logger.info(f"Loading dataset from: {csv_path}")
-    df = pd.read_csv(csv_path)
-    logger.info(f"Dataset loaded: {len(df)} rows, {len(df.columns)} columns")
-
-    # Use the same datetime conversion function as execution tool for consistency
-    df = _detect_and_convert_datetime_columns(df)
-
-    # Get column information
-    columns = df.columns.tolist()
-    dtypes = {col: str(dtype) for col, dtype in df.dtypes.items()}
-
-    # Get sample rows (first 5)
-    sample_df = df.head(5)
-    sample_rows = sample_df.to_dict(orient="records")
-
-    # Convert date-like columns and NaN values to strings/None for JSON serialization
-    for row in sample_rows:
-        for key, value in row.items():
-            if pd.isna(value):
-                row[key] = None
-            elif isinstance(value, (pd.Timestamp, pd.Timedelta)):
-                row[key] = str(value)
-            elif isinstance(value, (int, float)) and pd.isna(value):
-                row[key] = None
-
-    result = DatasetSchemaOutput(
-        columns=columns,
-        dtypes=dtypes,
-        sample_rows=sample_rows,
-        row_count=len(df),
-        description=meta["description"],
-    )
-
-    logger.info("OUTPUT SUMMARY:")
-    logger.info(f"  - Columns: {len(columns)}")
-    logger.info(f"  - Row count: {len(df)}")
-    logger.info(f"  - Sample rows: {len(sample_rows)}")
-    logger.debug(f"  - Column names: {columns}")
-    logger.info("=" * 60)
-
-    return result
+        raise RuntimeError(error_msg) from e
 
 
 @analysis_mcp.tool(
@@ -522,19 +470,15 @@ def run_analysis(
     plot_filename = str(img_dir / plot_basename)
     logger.info(f"Plot filename for this execution: {plot_filename}")
 
-    # Load all datasets
+    # Load all datasets using DatasetStore
     dfs = {}
     for ds_id in dataset_ids:
-        meta = DATASETS[ds_id]
-        csv_path = meta["path"]
-        logger.info(f"Loading dataset '{ds_id}' from: {csv_path}")
-        df = pd.read_csv(csv_path)
-        logger.info(
-            f"Dataset '{ds_id}' loaded: {len(df)} rows, {len(df.columns)} columns"
-        )
+        logger.info(f"Loading dataset '{ds_id}'")
+        # DatasetStore handles all storage-specific logic (local vs S3)
+        df = dataset_store.load_dataframe(ds_id)
 
         # Automatically detect and convert datetime columns
-        df = _detect_and_convert_datetime_columns(df)
+        df = detect_and_convert_datetime_columns(df)
         dfs[ds_id] = df
 
     # Prepare execution environment
