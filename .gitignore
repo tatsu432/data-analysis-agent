@@ -51,6 +51,7 @@ practice*
 # Data
 data*
 !datasets_registry.py
+!dataset_store.py
 
 # exception for the agent workflow diagram
 !agent_workflow.png
