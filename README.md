@@ -1,6 +1,6 @@
 # Data Analysis Agent Prototype
 
-This project is a 20-hour prototype demonstrating an LLM-powered data analysis agent that can answer analytical questions by generating Python code, executing it, analyzing the results, and responding in natural language.
+This project is a prototype demonstrating an LLM-powered data analysis agent that can answer analytical questions by generating Python code, executing it, analyzing the results, and responding in natural language.
 
 The goal is to show how an agent can perform end-to-end analysis on internal datasets (such as S3 or Redshift) in the future. For the prototype, the agent operates on multiple local CSV files including COVID-19 patient counts for Japanese prefectures and patient data.
 
@@ -40,6 +40,8 @@ High-Level Components:
   - retries on errors  
   - summarizes results  
   - loads tools from MCP server via `langchain-mcp-adapters`
+  - Includes query classification to route between document QA and data analysis
+  - Supports knowledge enrichment for domain-specific terms
 
 - **MCP Server** (`src/mcp_server/`)  
   - FastMCP server exposing data analysis tools
@@ -57,11 +59,27 @@ High-Level Components:
   - Dataset Tools:
     - `list_datasets`: Lists all available datasets with their IDs, descriptions, code aliases, and storage locations
     - `get_dataset_schema(dataset_id)`: Returns column names, datatypes, sample rows, and row count for a specific dataset
+  - Knowledge Tools:
+    - `list_documents`: Lists available knowledge documents (Excel dictionaries and PDF manuals)
+    - `get_term_definition(term)`: Gets definition of a specific term from the knowledge base
+    - `search_knowledge(query)`: Searches the knowledge base for terms and document chunks using hybrid search
   - Utilities (`utils.py`): Shared utility functions including automatic datetime column detection and conversion  
 
 The architecture follows a separation of concerns pattern where:
 - MCP tools are defined in `mcp_server/` and exposed via FastMCP
 - LangGraph agent flow is defined in `langgraph_server/` and consumes MCP tools
+
+### Agent Workflow
+
+The agent workflow includes query classification and routing:
+
+![Agent Workflow](agent_workflow.png)
+
+The workflow routes queries through:
+1. **Classification**: Determines if query is DOCUMENT_QA, DATA_ANALYSIS, or BOTH
+2. **Document QA Path**: For pure terminology questions, uses knowledge tools to answer
+3. **Knowledge Enrichment**: For queries needing both knowledge and analysis, enriches with domain term definitions
+4. **Data Analysis Path**: For data analysis queries, proceeds directly to code generation and execution
 
 ---
 
