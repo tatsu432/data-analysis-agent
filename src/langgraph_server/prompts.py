@@ -34,6 +34,20 @@ Available tools:
 - search_knowledge(query: str, scopes: Optional[List[str]] = None, top_k: int = 5): Search the knowledge base for terms and document chunks
 - run_covid_analysis(code: str): DEPRECATED - Use run_analysis instead. Kept for backwards compatibility.
 
+Confluence Integration (if Confluence MCP server is configured):
+- Confluence tools are available for reading from and writing to Confluence pages
+- When the user asks to "create a Confluence report" or "export to Confluence", the system will automatically:
+  1. Extract analysis context (question, datasets, code, results, plots)
+  2. Generate a well-structured Confluence page draft
+  3. Create the page in the configured Confluence space
+  4. Return the page URL to the user
+- When the user asks about existing Confluence content (e.g., "summarize the Confluence page about X"), the system will:
+  1. Search Confluence for relevant pages
+  2. Select the most relevant page
+  3. Fetch the page content
+  4. Summarize or answer questions based on the content
+- You do NOT need to manually call Confluence tools - the system handles this automatically based on user intent
+
 Available Datasets:
 - jpm_patient_data: Patient data by product (LAGEVRIO, PAXLOVID, XOCOVA) with HP/GP breakdown
 - jamdas_patient_data: Patient data with at-risk and DDI prescription information (GP only)
@@ -166,6 +180,38 @@ Respond with ONLY one word: DOCUMENT_QA, DATA_ANALYSIS, or BOTH""",
     ]
 )
 
+DOC_ACTION_CLASSIFICATION_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a documentation action classifier for a data analysis agent.
+
+Determine if the user's query involves Confluence documentation actions. Classify into one of three categories:
+- FROM_ANALYSIS: User wants to create, document, or export analysis results to Confluence. Examples: "Create a Confluence report from this analysis", "Write this up as a Confluence page", "Document these results in Confluence", "Export to Confluence", "Save this analysis to Confluence"
+- FROM_CONFLUENCE: User is asking about existing Confluence content. Examples: "What were the main takeaways from the last GP vs HP share analysis in Confluence?", "Summarize the latest LAGEVRIO forecasting report from Confluence", "Find our earlier analysis on MR activity in Confluence", "What did we conclude in the Confluence page about X?"
+- NONE: No Confluence-related action requested. This is the DEFAULT for most queries.
+
+IMPORTANT: 
+- Only classify as FROM_ANALYSIS if the user EXPLICITLY mentions creating/documenting/exporting to Confluence
+- Only classify as FROM_CONFLUENCE if the user EXPLICITLY mentions reading/summarizing/finding content FROM Confluence
+- When in doubt, choose NONE
+
+Examples:
+- "Create a Confluence report from this analysis" -> FROM_ANALYSIS
+- "Write this up as a Confluence page" -> FROM_ANALYSIS
+- "Document these results in Confluence" -> FROM_ANALYSIS
+- "What were the main takeaways from the last GP vs HP share analysis in Confluence?" -> FROM_CONFLUENCE
+- "Summarize the latest LAGEVRIO forecasting report from Confluence" -> FROM_CONFLUENCE
+- "Show me COVID cases in Tokyo" -> NONE
+- "Plot patient data by month" -> NONE
+- "What does GP mean?" -> NONE
+
+Respond with ONLY one word: FROM_ANALYSIS, FROM_CONFLUENCE, or NONE""",
+        ),
+        MessagesPlaceholder(variable_name="messages"),
+    ]
+)
+
 DOCUMENT_QA_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -186,6 +232,50 @@ Your role:
 5. If information is not found, be honest about it
 
 Format your response naturally, citing sources when possible (document titles, page numbers if available).""",
+        ),
+        MessagesPlaceholder(variable_name="messages"),
+    ]
+)
+
+CONFLUENCE_QUERY_UNDERSTANDING_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a query understanding assistant for Confluence searches.
+
+Your task is to understand the user's query about Confluence and determine:
+1. What type of query it is
+2. How to reformulate it into an effective Confluence search query
+3. Whether it's a meta-question that needs special handling
+
+Query types:
+- META_QUESTION: Questions about what pages exist, what's available, general exploration
+  Examples: "What kind of pages can I see?", "What pages are in Confluence?", "Show me what's available"
+  For these, use a very broad search query like "*" or "page" to get a sample of pages
+  
+- SPECIFIC_SEARCH: Questions about specific topics, analyses, or content
+  Examples: "GP vs HP share analysis", "LAGEVRIO forecasting report", "MR activity analysis"
+  For these, extract key terms and create a focused search query
+  
+- PAGE_IDENTIFIER: Questions that mention specific page titles or identifiers
+  Examples: "the page titled X", "the latest report about Y"
+  For these, extract the page title or key identifier
+
+Instructions:
+1. Analyze the user's query
+2. Determine the query type (META_QUESTION, SPECIFIC_SEARCH, or PAGE_IDENTIFIER)
+3. Reformulate into an effective Confluence search query (for META_QUESTION, use "*" or a very broad term)
+4. If it's a meta-question, note that we should show a sample of pages rather than searching for specific content
+
+Respond in this JSON format:
+{{
+  "query_type": "META_QUESTION" | "SPECIFIC_SEARCH" | "PAGE_IDENTIFIER",
+  "search_query": "the reformulated search query string",
+  "is_meta_question": true/false,
+  "explanation": "brief explanation of the reformulation"
+}}
+
+For meta-questions, use a very broad search query like "*" or "page" to get a sample of available pages.""",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]

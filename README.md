@@ -361,6 +361,8 @@ You can ask:
 - 患者経験調査とは何？
 - What does Hp mean?
 - 開発シナジー効果とは？
+- Can you tell me what kind of confluence pages do I have access to?
+- Summarize the result and create a confluence page about your analysis.
 ---
 
 
@@ -432,6 +434,108 @@ The knowledge index uses an **in-memory vector search** approach:
 
 ---
 
+## Confluence Integration via MCP
+
+The agent supports integration with Confluence for persistent documentation of analyses and retrieval of previous analyses. This integration uses MCP (Model Context Protocol) tools, allowing the agent to read from and write to Confluence pages.
+
+### Features
+
+1. **Export Analysis to Confluence**
+   - After running a data analysis, users can request to create a Confluence report
+   - The agent automatically:
+     - Extracts analysis context (question, datasets used, code, results, plots)
+     - Generates a well-structured Confluence page draft with sections:
+       - Overview / Business Question
+       - Datasets Used
+       - Methodology (with code)
+       - Results (tables and plot references)
+       - Interpretation / Caveats
+       - Reproduction Steps
+     - Creates the page in the configured Confluence space
+     - Returns the page URL to the user
+
+2. **Read and Summarize Existing Confluence Pages**
+   - Users can ask questions about existing Confluence content
+   - The agent automatically:
+     - Searches Confluence for relevant pages
+     - Selects the most relevant page based on the query
+     - Fetches the full page content
+     - Summarizes or answers questions based on the content
+
+### Configuration
+
+To enable Confluence integration:
+
+1. **Set up a Confluence MCP Server**
+   
+   **Quick Start (Recommended):** A ready-to-use Confluence MCP server is included in the `confluence_mcp_server/` directory.
+   
+   ```bash
+   # Install dependencies
+   cd confluence_mcp_server
+   pip install -r requirements.txt
+   
+   # Add to your .env file:
+   CONFLUENCE_URL=https://yourcompany.atlassian.net
+   CONFLUENCE_USERNAME=your.email@company.com
+   CONFLUENCE_API_TOKEN=your_api_token_here
+   CONFLUENCE_MCP_PORT=8083
+   
+   # Run the server
+   python server.py
+   ```
+   
+   **For detailed setup instructions**, see [CONFLUENCE_MCP_SETUP.md](CONFLUENCE_MCP_SETUP.md) which covers:
+   - Step-by-step setup guide
+   - Alternative options (Atlassian official, CData)
+   - Troubleshooting tips
+   - Getting API tokens
+
+2. **Configure Environment Variables in your main project**
+   ```bash
+   CONFLUENCE_MCP_SERVER_URL=http://localhost:8083/mcp  # URL of your Confluence MCP server
+   CONFLUENCE_SPACE_KEY_ANALYTICS=ANALYTICS  # Default space key for analytics reports
+   ```
+
+3. **Start the Confluence MCP Server**
+   - Run the server: `python confluence_mcp_server/server.py`
+   - Ensure it's running and accessible at the configured URL
+   - The server uses your Confluence API token for authentication
+
+### Usage Examples
+
+**Export to Confluence:**
+```
+User: "Create a Confluence report from this analysis."
+User: "Write this up as a Confluence page under the Merck analytics space."
+User: "Document these results in Confluence for the product owner."
+```
+
+**Read from Confluence:**
+```
+User: "What were the main takeaways from the last GP vs HP share analysis in Confluence?"
+User: "Summarize the latest LAGEVRIO forecasting report from Confluence."
+User: "Find our earlier analysis on MR activity and patient counts and tell me the result."
+```
+
+### Architecture Notes
+
+- The Confluence integration is **additive** - existing functionality remains unchanged
+- Confluence tools are loaded from a separate MCP server alongside the data analysis tools
+- The agent automatically routes to Confluence subflows based on user intent (detected via classification)
+- If the Confluence MCP server is not configured, the agent continues to work normally without Confluence features
+
+### Tool Discovery
+
+The agent automatically discovers Confluence tools from the MCP server. It looks for tools with names containing:
+- For search: `confluence` + `search` + `page`
+- For get: `confluence` + (`get` or `fetch`) + `page`
+- For create: `confluence` + `create` + `page`
+
+The exact tool names may vary depending on your Confluence MCP server implementation. The agent is designed to be flexible and adapt to different tool naming conventions.
+
+---
+
 ## Future Extensions
 
 - Connecting to additional data sources (Redshift, BigQuery, etc.) using MCP tools
@@ -443,8 +547,9 @@ The knowledge index uses an **in-memory vector search** approach:
 - Additional statistical and machine learning libraries
 - Persistent vector database (pgvector) for larger document collections
 - Additional document formats (Word, Markdown, etc.)
+- Update/append to existing Confluence pages (stretch goal)
 
-This prototype is intentionally simple but complete, demonstrating the viability of LLM-driven data analysis workflows with integrated knowledge management.
+This prototype is intentionally simple but complete, demonstrating the viability of LLM-driven data analysis workflows with integrated knowledge management and Confluence documentation.
 
 ---
 
@@ -474,6 +579,10 @@ AWS_DEFAULT_REGION=us-east-1
 AWS_ACCESS_KEY_ID=your_aws_access_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret_key
 AWS_S3_BUCKET=your_bucket_name
+
+# Optional: For Confluence integration
+CONFLUENCE_MCP_SERVER_URL=http://localhost:8083/mcp  # Confluence MCP server URL (if using Confluence integration)
+CONFLUENCE_SPACE_KEY_ANALYTICS=ANALYTICS  # Default Confluence space key for analytics reports
 ```
 
 **Important**: When you run `langgraph dev`, it will automatically create an assistant from your graph. The `assistant_id` is typically a UUID (not the graph name). You can find it by:

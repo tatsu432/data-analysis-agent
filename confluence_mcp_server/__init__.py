@@ -1,0 +1,2 @@
+"""Confluence MCP Server package."""
+
