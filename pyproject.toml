@@ -33,4 +33,5 @@ dependencies = [
     "pypdf>=3.0.0", # For PDF text extraction
     "sentence-transformers>=2.2.0", # For embeddings (optional, falls back to TF-IDF)
     "openpyxl>=3.0.0", # For Excel file reading
+    "atlassian-python-api>=4.0.7",
 ]

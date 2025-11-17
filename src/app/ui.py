@@ -37,7 +37,7 @@ st.set_page_config(
 )
 
 st.title("📊 Data Analysis Agent")
-st.markdown("Ask questions about COVID-19 data for Japanese prefectures")
+st.markdown("Ask questions about COVID-19 data, Confluence pages, and other data sources (PDF, Excel, etc.)")
 
 
 def get_or_create_assistant():
