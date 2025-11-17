@@ -43,16 +43,21 @@ High-Level Components:
 
 - **MCP Server** (`src/mcp_server/`)  
   - FastMCP server exposing data analysis tools
-  - Dataset Registry: Centralized registry of available datasets with metadata
-  - Execution Tool (`run_analysis`)  
-    - loads one or more datasets into dataframes  
+  - Dataset Registry (`datasets_registry.py`): Centralized registry of available datasets with metadata
+  - Dataset Store (`dataset_store.py`): Abstraction layer for loading datasets from various storage backends
+    - Supports `local_csv`: Local CSV files
+    - Supports `s3_csv`: CSV files stored on S3 (using s3fs or boto3)
+  - Execution Tool (`run_analysis` in `analysis_tools.py`)  
+    - loads one or more datasets into dataframes via DatasetStore
     - executes generated Python code safely  
     - returns previews and plots  
     - supports multi-dataset analysis
+    - includes plot validation to detect empty/invalid plots
+    - supports advanced libraries: sklearn, statsmodels, torch, Prophet, pmdarima, arch
   - Dataset Tools:
-    - `list_datasets`: Lists all available datasets with their IDs and descriptions
-    - `get_dataset_schema(dataset_id)`: Returns column names, datatypes, and sample rows for a specific dataset
-  - Legacy Tool (`run_covid_analysis`): Deprecated wrapper for backwards compatibility  
+    - `list_datasets`: Lists all available datasets with their IDs, descriptions, code aliases, and storage locations
+    - `get_dataset_schema(dataset_id)`: Returns column names, datatypes, sample rows, and row count for a specific dataset
+  - Utilities (`utils.py`): Shared utility functions including automatic datetime column detection and conversion  
 
 The architecture follows a separation of concerns pattern where:
 - MCP tools are defined in `mcp_server/` and exposed via FastMCP
@@ -68,7 +73,10 @@ project-root/
 │ ├── newly_confirmed_cases_daily.csv
 │ ├── jpm_patient_data.csv
 │ ├── jamdas_patient_data.csv
-│ └── mr_activity_data.csv
+│ ├── mr_activity_data.csv
+│ └── kaggle_covid/ # Additional COVID-19 datasets (optional)
+│
+├── img/ # Generated plot images are saved here
 │
 ├── src/
 │ ├── langgraph_server/
@@ -83,8 +91,10 @@ project-root/
 │ │ ├── server.py # FastMCP server entry point
 │ │ ├── analysis_tools.py # MCP tools (list_datasets, get_dataset_schema, run_analysis)
 │ │ ├── datasets_registry.py # Dataset registry with metadata
+│ │ ├── dataset_store.py # Abstraction layer for loading datasets (local_csv, s3_csv)
 │ │ ├── schema.py # Pydantic schemas for tool inputs/outputs
 │ │ ├── settings.py # MCP server settings
+│ │ ├── utils.py # Shared utility functions (datetime conversion, etc.)
 │ │ └── __main__.py # Entry point for running the MCP server
 │ │
 │ ├── app/
@@ -103,7 +113,8 @@ Returns a list of all available datasets with:
 - Dataset IDs
 - Descriptions
 - Code aliases (variable names for use in code)
-- File paths
+- Storage kind (`local_csv` or `s3_csv`)
+- Location hint (file path for local, S3 URI for S3)
 
 Use this to discover which datasets are available for analysis.
 
@@ -140,13 +151,19 @@ Executes generated Python code in a controlled environment with one or more data
 - Code aliases: Each dataset has a code_name (e.g., `df_covid_daily`, `df_jpm_patients`)
 
 **Execution rules:**
-- Allowed imports: pandas, numpy, matplotlib.pyplot
+- Allowed libraries: pandas (pd), numpy (np), matplotlib.pyplot (plt), sklearn, statsmodels, torch, Prophet, pmdarima, arch
+  - sklearn modules: linear_model, metrics, model_selection, preprocessing
+  - statsmodels: Comprehensive statistical modeling (OLS, ARIMA, SARIMAX, VAR, etc.)
+  - PyTorch: Deep learning and tensor operations
+  - Time series: Prophet (Facebook Prophet), pmdarima (Auto ARIMA), arch (ARCH/GARCH)
 - Date columns are automatically converted to datetime
+- Plot validation: Automatically validates plots to detect empty/invalid plots
 - Captures:
   - stdout  
   - error  
   - preview of `result_df` if defined  
   - saved plot with timestamped filename (e.g., `plot_20251115_212901.png`) if created
+  - plot validation status and messages
 
 **Example for single dataset:**
 ```python
@@ -165,14 +182,6 @@ run_analysis(
     primary_dataset_id="jpm_patient_data"
 )
 ```
-
----
-
-### `run_covid_analysis(code: str)` (DEPRECATED)
-
-**DEPRECATED**: This tool is deprecated and will be removed in a future version. Use `run_analysis` instead.
-
-Backwards-compatible wrapper that calls `run_analysis` with the COVID dataset. Kept for compatibility with existing code.  
 
 ---
 
@@ -210,14 +219,29 @@ You can ask:
 
 
 
+## Available Datasets
+
+The system currently supports the following datasets:
+
+1. **jpm_patient_data**: Patient data by product (LAGEVRIO, PAXLOVID, XOCOVA) with HP/GP breakdown
+2. **jamdas_patient_data**: Patient data with at-risk and DDI prescription information (GP only)
+3. **covid_new_cases_daily**: COVID-19 newly confirmed cases daily data for Japanese prefectures (local CSV)
+4. **mr_activity_data**: MR activity data by prefecture, month, and HP/GP type (detailing visits, emails, seminars) for all 47 prefectures from 2023-04 to 2025-09
+5. **covid_full_grouped**: Global COVID-19 data grouped by country/region and date (S3-based)
+
+Datasets can be stored locally (`local_csv`) or on S3 (`s3_csv`). The DatasetStore abstraction handles loading from both sources transparently.
+
+---
+
 ## Future Extensions
 
-- Connecting to S3 or Redshift using MCP tools
-- Multi-dataset discovery and retrieval
+- Connecting to additional data sources (Redshift, BigQuery, etc.) using MCP tools
+- Enhanced multi-dataset discovery and retrieval
 - Multi-agent planning (planner / code writer / verifier)
 - Schema retrieval via RAG
 - Query decomposition for complex analytics
 - Notebook-style report generation
+- Additional statistical and machine learning libraries
 
 This prototype is intentionally simple but complete, demonstrating the viability of LLM-driven data analysis workflows.
 
@@ -243,6 +267,12 @@ OPENAI_API_KEY=your_openai_api_key
 DATA_ANALYSIS_MCP_SERVER_URL=http://localhost:8082/mcp  # Default MCP server URL (must include /mcp path)
 LANGGRAPH_SERVER_URL=http://localhost:2024  # Default LangGraph Server URL (used by Streamlit)
 LANGGRAPH_ASSISTANT_ID=<your-assistant-uuid>  # Assistant ID (UUID) for LangGraph Server - find it in LangGraph Studio UI
+
+# Optional: For S3-based datasets (e.g., covid_full_grouped)
+AWS_DEFAULT_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_S3_BUCKET=your_bucket_name
 ```
 
 **Important**: When you run `langgraph dev`, it will automatically create an assistant from your graph. The `assistant_id` is typically a UUID (not the graph name). You can find it by:
@@ -329,6 +359,7 @@ The project follows a clean separation of concerns with three independent server
    - Defines and exposes tools via FastMCP
    - Runs on port 8082 (default)
    - Tools are independent and can be reused by other agents or services
+   - Supports multiple storage backends (local files, S3) via DatasetStore abstraction
 
 2. **LangGraph Server** (`src/langgraph_server/`): 
    - Defines the agent workflow and consumes MCP tools via HTTP
