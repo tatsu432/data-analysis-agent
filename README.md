@@ -112,6 +112,7 @@ The architecture follows a separation of concerns pattern where:
 ### Agent Workflow
 
 The agent workflow includes query classification and routing:
+![High Level Agentic AI Architecture](high-level-architecture-data-analysis-agent.png)
 
 ![Agent Workflow](agent_workflow.png)
 
@@ -750,6 +751,18 @@ python -m src.langgraph_server.generate_diagram --format svg
 # Custom output path
 python -m src.langgraph_server.generate_diagram --output my_workflow.png
 ```
+
+### 6. View System Architecture Diagram
+
+A comprehensive Mermaid diagram showing all server connections and data flows is available in [`architecture_diagram.md`](architecture_diagram.md). This diagram illustrates:
+
+- Streamlit UI connections to LangGraph Server
+- LangGraph Server connections to MCP servers
+- MCP server connections to data sources (CSV, Excel, PDF, AWS S3)
+- Confluence MCP Server connections to Confluence API
+- Data flow examples for different use cases
+
+You can view the diagram in any Markdown viewer that supports Mermaid (GitHub, GitLab, VS Code with Mermaid extension, etc.).
 
 ---
 

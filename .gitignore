@@ -55,6 +55,7 @@ data*
 
 # exception for the agent workflow diagram
 !agent_workflow.png
+!high-level-architecture-data-analysis-agent.png
 
 # LangGraph API
 .langgraph_api*
