@@ -56,7 +56,7 @@ class AgentState(TypedDict):
     ]  # Stores recent analysis results for Confluence export
 
 
-async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
+async def create_agent(model_name: str = "gpt-5.1", temperature: float = 0.1):
     """
     Create the data analysis agent graph.
 

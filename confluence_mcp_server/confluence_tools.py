@@ -233,7 +233,7 @@ def confluence_create_page(
     Create a new Confluence page.
 
     Args:
-        space_key: The space key where the page should be created
+        space_key: The space key where the page should be created. Use "ANALYTICS" for the Analytics space.
         title: Page title
         body: Page body content (markdown, HTML, or Confluence Storage Format)
         parent_id: Optional parent page ID

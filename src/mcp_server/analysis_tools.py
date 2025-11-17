@@ -16,6 +16,14 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+# Suppress matplotlib font warnings for missing glyphs (we handle Japanese fonts separately)
+warnings.filterwarnings(
+    "ignore",
+    message=".*Glyph.*missing from font.*",
+    category=UserWarning,
+    module="matplotlib",
+)
+
 import arch
 import matplotlib
 import numpy as np
@@ -43,7 +51,80 @@ from .utils import detect_and_convert_datetime_columns
 logger = logging.getLogger(__name__)
 
 matplotlib.use("Agg")  # Use non-interactive backend
+import matplotlib.font_manager as fm  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402 - Must import after setting backend
+
+
+# Configure matplotlib to support Japanese characters
+def _configure_japanese_font():
+    """Configure matplotlib to use a font that supports Japanese characters."""
+    # Try to find a Japanese-compatible font
+    # Priority: Noto Sans CJK > Hiragino Sans (macOS) > MS Gothic (Windows) > fallback
+    japanese_fonts = [
+        "Noto Sans CJK JP",  # Google Noto Sans CJK (if installed)
+        "Noto Sans CJK SC",  # Simplified Chinese variant (also supports Japanese)
+        "Hiragino Sans",  # macOS default Japanese font
+        "Hiragino Kaku Gothic ProN",  # macOS alternative
+        "Hiragino Kaku Gothic Pro",  # macOS alternative (without N)
+        "Yu Gothic",  # Windows 10+ Japanese font
+        "MS Gothic",  # Windows Japanese font
+        "Takao Gothic",  # Linux Japanese font
+    ]
+
+    # Get list of available fonts (case-insensitive search)
+    available_fonts = {f.name.lower(): f.name for f in fm.fontManager.ttflist}
+    available_font_names = list(available_fonts.values())
+
+    # Try to find a Japanese-compatible font (case-insensitive)
+    selected_font = None
+    for font_name in japanese_fonts:
+        # Try exact match first
+        if font_name in available_font_names:
+            selected_font = font_name
+            logger.info(f"Using Japanese-compatible font: {font_name}")
+            break
+        # Try case-insensitive match
+        font_lower = font_name.lower()
+        if font_lower in available_fonts:
+            selected_font = available_fonts[font_lower]
+            logger.info(
+                f"Using Japanese-compatible font: {selected_font} (matched {font_name})"
+            )
+            break
+        # Try partial match (for fonts with variations)
+        for available_font in available_font_names:
+            if (
+                font_name.lower() in available_font.lower()
+                or available_font.lower() in font_name.lower()
+            ):
+                selected_font = available_font
+                logger.info(
+                    f"Using Japanese-compatible font: {selected_font} (partial match for {font_name})"
+                )
+                break
+        if selected_font:
+            break
+
+    if selected_font:
+        # Configure matplotlib to use the font
+        plt.rcParams["font.family"] = selected_font
+        # Also set sans-serif fallback with the Japanese font first
+        current_sans_serif = plt.rcParams.get("font.sans-serif", [])
+        # Remove the selected font if it's already in the list to avoid duplicates
+        current_sans_serif = [f for f in current_sans_serif if f != selected_font]
+        plt.rcParams["font.sans-serif"] = [selected_font] + current_sans_serif
+        logger.info(f"Configured matplotlib to use font: {selected_font}")
+    else:
+        # If no Japanese font found, log available fonts for debugging
+        logger.warning(
+            "No Japanese-compatible font found. Japanese characters may not display correctly. "
+            "Consider installing a font like 'Noto Sans CJK JP' or 'Hiragino Sans'."
+        )
+        logger.debug(f"Available fonts (first 20): {available_font_names[:20]}")
+
+
+# Configure Japanese font support
+_configure_japanese_font()
 
 # Set ggplot style for all plots
 plt.style.use("ggplot")

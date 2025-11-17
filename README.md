@@ -38,7 +38,17 @@ The agent can:
 
 8. Understand and summarize the results in natural language, explaining domain terms when relevant
 
-This provides a clear vertical slice of an "LLM analyst" workflow with integrated knowledge management and is designed to be extensible to enterprise data.
+9. **Export analysis results to Confluence**
+   - Create structured Confluence reports from analysis results
+   - Automatically format content with sections, code snippets, and results
+   - Store page information for future reference
+
+10. **Read and summarize existing Confluence pages**
+    - Search for relevant Confluence pages
+    - Understand and handle different query types (meta-questions, specific searches)
+    - Summarize or answer questions based on Confluence content
+
+This provides a clear vertical slice of an "LLM analyst" workflow with integrated knowledge management, Confluence documentation, and is designed to be extensible to enterprise data.
 
 ---
 
@@ -51,11 +61,12 @@ High-Level Components:
   - writes Python code  
   - retries on errors  
   - summarizes results  
-  - loads tools from MCP server via `langchain-mcp-adapters`
-  - Includes query classification to route between document QA and data analysis
+  - loads tools from multiple MCP servers via `langchain-mcp-adapters`
+  - Includes query classification to route between document QA, data analysis, and Confluence operations
   - Supports knowledge enrichment for domain-specific terms
+  - Integrates Confluence read/write workflows
 
-- **MCP Server** (`src/mcp_server/`)  
+- **Data Analysis MCP Server** (`src/mcp_server/`)  
   - FastMCP server exposing data analysis tools
   - Dataset Registry (`datasets_registry.py`): Centralized registry of available datasets with metadata
   - Dataset Store (`dataset_store.py`): Abstraction layer for loading datasets from various storage backends
@@ -87,9 +98,16 @@ High-Level Components:
       - `search_knowledge(query, scopes, top_k)`: Searches the knowledge base using hybrid search
   - Utilities (`utils.py`): Shared utility functions including automatic datetime column detection and conversion  
 
+- **Confluence MCP Server** (`confluence_mcp_server/`)  
+  - FastMCP server exposing Confluence integration tools
+  - Provides tools for searching, reading, creating, and updating Confluence pages
+  - Handles markdown-to-HTML conversion and format compatibility
+  - Filters search results to match Confluence Content view behavior
+
 The architecture follows a separation of concerns pattern where:
-- MCP tools are defined in `mcp_server/` and exposed via FastMCP
-- LangGraph agent flow is defined in `langgraph_server/` and consumes MCP tools
+- MCP tools are defined in separate servers (`mcp_server/` and `confluence_mcp_server/`) and exposed via FastMCP
+- LangGraph agent flow is defined in `langgraph_server/` and consumes tools from multiple MCP servers
+- Each MCP server can be developed, deployed, and scaled independently
 
 ### Agent Workflow
 
@@ -98,10 +116,14 @@ The agent workflow includes query classification and routing:
 ![Agent Workflow](agent_workflow.png)
 
 The workflow routes queries through:
-1. **Classification**: Determines if query is DOCUMENT_QA, DATA_ANALYSIS, or BOTH
+1. **Classification**: 
+   - Determines if query is DOCUMENT_QA, DATA_ANALYSIS, or BOTH
+   - Detects Confluence-related intents (`FROM_ANALYSIS` for export, `FROM_CONFLUENCE` for reading)
 2. **Document QA Path**: For pure terminology questions, uses knowledge tools to answer
 3. **Knowledge Enrichment**: For queries needing both knowledge and analysis, enriches with domain term definitions
 4. **Data Analysis Path**: For data analysis queries, proceeds directly to code generation and execution
+5. **Confluence Export Path**: After successful analysis, if user requested export, creates Confluence page with results
+6. **Confluence Read Path**: For Confluence queries, searches pages, selects relevant content, and summarizes
 
 ---
 
@@ -125,7 +147,7 @@ project-root/
 │ ├── langgraph_server/
 │ │ ├── graph.py # LangGraph agent definition
 │ │ ├── prompts.py # Agent prompts and reasoning steps
-│ │ ├── mcp_tool_loader.py # Loads tools from MCP server
+│ │ ├── mcp_tool_loader.py # Loads tools from MCP server(s)
 │ │ ├── settings.py # LangGraph server settings
 │ │ ├── __main__.py # Entry point for CLI mode
 │ │ └── generate_diagram.py # Script to generate workflow diagram
@@ -146,6 +168,12 @@ project-root/
 │ │
 │ ├── app/
 │ │ └── ui.py # Streamlit UI
+│
+├── confluence_mcp_server/
+│ ├── server.py # Confluence MCP server entry point
+│ ├── confluence_tools.py # Confluence MCP tools (search, get, create, update pages)
+│ ├── __init__.py
+│ └── README.md # Quick start guide for Confluence MCP server
 │
 └── README.md
 ```
@@ -351,18 +379,26 @@ Searches the knowledge base for relevant information using hybrid search.
 You can ask:
 
 - How does the number of patients vary from January to July 2022 in Tokyo?
+- 2022年1月から2022年12月までの東京のコロナウイルス感染者数を図にして、要約して
 - Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.
 - What characteristics does the patient count data have overall?
 - Can you model the Tokyo's covid case and tell me the model clearly?
 - Can you compare the each product's number of patients over the time for GP only?
+- HPのみに絞った上で、ラゲブリオ、パケロビッド、ゾコーバのそれぞれのコロナウイルス治療患者数を2022年1月から2024年12月までで図にして
 - Can you generate the line plots of the number of the patients for each product only for those at risk over the time?
 - Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE.
+- MRの活動からラゲブリオの患者人数を予測する回帰モデルを作成して、予測精度についてまとめて、回帰モデルをわかりやすく説明して
 - Generate the line plots of the number of those who are recovered from COVID over the time for South Korea, Canada, France, and US.
+- 韓国、カナダ、フランス、アメリカに関して、コロナウイルス治癒患者数を時系列でプロットして
+- 世界規模の動向を知るために、韓国、カナダ、フランス、アメリカに関して、コロナウイルス治癒患者数を時系列でプロットして
 - 患者経験調査とは何？
 - What does Hp mean?
 - 開発シナジー効果とは？
-- Can you tell me what kind of confluence pages do I have access to?
+- What kind of confluence pages can I see?
+- どのようなConfluenceのページがある？
 - Summarize the result and create a confluence page about your analysis.
+- Create a Confluence report from this analysis.
+- コロナウイルスに関する今までの分析をまとめて、Confluenceのページに投稿して
 ---
 
 
@@ -443,22 +479,29 @@ The agent supports integration with Confluence for persistent documentation of a
 1. **Export Analysis to Confluence**
    - After running a data analysis, users can request to create a Confluence report
    - The agent automatically:
-     - Extracts analysis context (question, datasets used, code, results, plots)
-     - Generates a well-structured Confluence page draft with sections:
+     - Extracts analysis context (question, datasets used, code, results, plots, summary)
+     - Generates a well-structured Confluence page draft using an LLM with sections:
        - Overview / Business Question
        - Datasets Used
-       - Methodology (with code)
+       - Methodology (with code snippets in markdown)
        - Results (tables and plot references)
        - Interpretation / Caveats
        - Reproduction Steps
-     - Creates the page in the configured Confluence space
-     - Returns the page URL to the user
+     - Converts markdown to HTML for Confluence compatibility
+     - Creates the page in the configured Confluence space (default: `CONFLUENCE_SPACE_KEY_ANALYTICS`)
+     - Returns the page ID and URL to the user
+     - Stores page information in state for future reference
 
 2. **Read and Summarize Existing Confluence Pages**
    - Users can ask questions about existing Confluence content
+   - The agent intelligently handles different query types:
+     - **Meta-questions** (e.g., "What kind of pages can I see?"): Shows a list of available pages
+     - **Specific searches** (e.g., "GP vs HP analysis"): Searches and selects the most relevant page
    - The agent automatically:
-     - Searches Confluence for relevant pages
-     - Selects the most relevant page based on the query
+     - Understands and reformulates the user's query for effective Confluence search
+     - Searches Confluence pages by title (matching Content view behavior)
+     - Filters out attachments, archived pages, and invalid entries
+     - Selects the most relevant page using LLM-based ranking
      - Fetches the full page content
      - Summarizes or answers questions based on the content
 
@@ -471,19 +514,19 @@ To enable Confluence integration:
    **Quick Start (Recommended):** A ready-to-use Confluence MCP server is included in the `confluence_mcp_server/` directory.
    
    ```bash
-   # Install dependencies
-   cd confluence_mcp_server
-   pip install -r requirements.txt
+   # Install dependencies (if not already installed)
+   pip install atlassian-python-api markdown
    
-   # Add to your .env file:
+   # Add to your .env file (in the project root):
    CONFLUENCE_URL=https://yourcompany.atlassian.net
    CONFLUENCE_USERNAME=your.email@company.com
    CONFLUENCE_API_TOKEN=your_api_token_here
-   CONFLUENCE_MCP_PORT=8083
    
    # Run the server
-   python server.py
+   python confluence_mcp_server/server.py
    ```
+   
+   The server will start on port 8083 by default and expose Confluence tools via MCP.
    
    **For detailed setup instructions**, see [CONFLUENCE_MCP_SETUP.md](CONFLUENCE_MCP_SETUP.md) which covers:
    - Step-by-step setup guide
@@ -513,26 +556,75 @@ User: "Document these results in Confluence for the product owner."
 
 **Read from Confluence:**
 ```
+User: "What kind of confluence pages can I see?"
 User: "What were the main takeaways from the last GP vs HP share analysis in Confluence?"
 User: "Summarize the latest LAGEVRIO forecasting report from Confluence."
 User: "Find our earlier analysis on MR activity and patient counts and tell me the result."
 ```
 
+**Note**: The agent intelligently handles meta-questions (like "What kind of pages can I see?") by showing a list of available pages, while specific queries trigger a search and summarization workflow.
+
 ### Architecture Notes
 
 - The Confluence integration is **additive** - existing functionality remains unchanged
 - Confluence tools are loaded from a separate MCP server alongside the data analysis tools
-- The agent automatically routes to Confluence subflows based on user intent (detected via classification)
+- The agent automatically routes to Confluence subflows based on user intent (detected via `doc_action` classification)
+- The integration includes:
+  - Query understanding and reformulation for better search results
+  - Intelligent filtering to match Confluence Content view behavior
+  - Automatic markdown-to-HTML conversion for page creation
+  - Comprehensive error handling with user-friendly messages
 - If the Confluence MCP server is not configured, the agent continues to work normally without Confluence features
+- The agent supports multiple MCP servers simultaneously (data analysis + Confluence)
 
-### Tool Discovery
+### Confluence Tools
 
-The agent automatically discovers Confluence tools from the MCP server. It looks for tools with names containing:
-- For search: `confluence` + `search` + `page`
-- For get: `confluence` + (`get` or `fetch`) + `page`
-- For create: `confluence` + `create` + `page`
+The agent uses the following Confluence MCP tools (provided by the Confluence MCP server):
 
-The exact tool names may vary depending on your Confluence MCP server implementation. The agent is designed to be flexible and adapt to different tool naming conventions.
+1. **`confluence_search_pages(query, space_key=None, limit=10)`**
+   - Searches for Confluence pages by title (matches Content view behavior)
+   - Filters out attachments, archived pages, and invalid entries
+   - Returns cleaned page information with excerpts
+   - Supports space filtering and result limiting
+
+2. **`confluence_get_page(page_id)`**
+   - Fetches the full content of a specific Confluence page
+   - Returns page content, title, and URL
+
+3. **`confluence_create_page(space_key, title, body, parent_id=None)`**
+   - Creates a new Confluence page
+   - Automatically converts markdown to HTML
+   - Supports both storage format (HTML) and wiki format as fallback
+   - Returns page ID and URL
+
+4. **`confluence_update_page(page_id, title=None, body=None)`**
+   - Updates an existing Confluence page
+   - Preserves page versioning
+
+### Query Understanding and Routing
+
+The agent uses intelligent query understanding to handle different types of Confluence-related queries:
+
+- **Meta-questions**: Questions like "What kind of pages can I see?" are detected and handled by showing a sample of available pages
+- **Specific searches**: Queries about specific topics are reformulated into effective search queries before searching
+- **Export requests**: Queries like "Create a Confluence report" are routed to the export subflow after analysis completion
+
+### Error Handling
+
+The agent provides helpful error messages for common issues:
+
+- **Permissions errors**: Provides troubleshooting steps when the user lacks permission to create pages
+- **Space key issues**: Validates space keys and suggests alternatives
+- **Format conversion errors**: Automatically falls back to alternative formats if markdown conversion fails
+
+### Workflow Integration
+
+The Confluence integration is seamlessly integrated into the agent workflow:
+
+1. **Classification**: The agent classifies queries to detect Confluence-related intents (`FROM_ANALYSIS` or `FROM_CONFLUENCE`)
+2. **Routing**: Based on classification, queries are routed to appropriate Confluence subflows
+3. **State Management**: Confluence page IDs and URLs are stored in agent state for future reference
+4. **Non-blocking**: If Confluence tools are unavailable, the agent continues to work normally without Confluence features
 
 ---
 

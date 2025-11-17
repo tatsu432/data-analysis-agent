@@ -93,6 +93,7 @@ When analyzing data:
   provided in the execution environment (e.g., 'plot_20251115_212901.png')
 - When a plot is successfully created, the tool returns plot_path (file location)
 - ALWAYS inform the user where the plot file is saved (use plot_path from the tool result)
+- Japanese characters in plot labels, titles, and legends are automatically supported - you can use Japanese text directly in matplotlib labels (e.g., plt.xlabel('日付'), plt.title('東京の新規感染者数'))
 
 IMPORTANT - Matplotlib Styles:
 - DO NOT use deprecated seaborn styles like 'seaborn-whitegrid', 'seaborn-darkgrid', etc.
