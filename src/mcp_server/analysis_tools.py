@@ -4,9 +4,17 @@ import io
 import logging
 import sys
 import traceback
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
+
+# Suppress plotly import warning from pandas (we use matplotlib, not plotly)
+warnings.filterwarnings(
+    "ignore",
+    message=".*plotly.*",
+    category=UserWarning,
+)
 
 import arch
 import matplotlib

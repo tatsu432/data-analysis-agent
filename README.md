@@ -215,6 +215,9 @@ You can ask:
 - Can you generate the line plots of the number of the patients for each product only for those at risk over the time?
 - Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE.
 - Generate the line plots of the number of those who are recovered from COVID over the time for South Korea, Canada, France, and US.
+- 患者経験調査とは何？
+- What does Hp mean?
+- 開発シナジー効果とは？
 ---
 
 
