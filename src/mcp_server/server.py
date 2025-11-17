@@ -2,6 +2,14 @@
 
 import asyncio
 import logging
+import warnings
+
+# Suppress plotly import warning from pandas (we use matplotlib, not plotly)
+warnings.filterwarnings(
+    "ignore",
+    message=".*plotly.*",
+    category=UserWarning,
+)
 
 from .analysis_tools import analysis_mcp
 from .knowledge_tools import (  # noqa: F401 - Import to register tools
