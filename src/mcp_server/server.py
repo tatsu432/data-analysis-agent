@@ -4,6 +4,9 @@ import asyncio
 import logging
 
 from .analysis_tools import analysis_mcp
+from .knowledge_tools import (  # noqa: F401 - Import to register tools
+    _ensure_index_built,
+)
 from .settings import get_settings
 
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +18,9 @@ settings = get_settings()
 async def main() -> None:
     """Main function."""
     try:
-        logger.info("Starting MCP server with data analysis tools...")
+        logger.info("Starting MCP server with data analysis and knowledge tools...")
+        # Ensure knowledge index is built on startup
+        _ensure_index_built()
         await analysis_mcp.run_async(
             transport=settings.transport, host=settings.host, port=settings.port
         )

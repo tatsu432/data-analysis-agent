@@ -14,7 +14,12 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import NotRequired, TypedDict
 
 from .mcp_tool_loader import MCPToolLoader
-from .prompts import ANALYSIS_PROMPT
+from .prompts import (
+    ANALYSIS_PROMPT,
+    CLASSIFICATION_PROMPT,
+    DOCUMENT_QA_PROMPT,
+    KNOWLEDGE_ENRICHMENT_PROMPT,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +36,8 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     retry_count: NotRequired[int]
+    query_classification: NotRequired[Literal["DOCUMENT_QA", "DATA_ANALYSIS", "BOTH"]]
+    knowledge_context: NotRequired[str]
 
 
 async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1):
@@ -61,6 +68,132 @@ async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1)
     # Bind tools to the LLM
     llm_with_tools = llm.bind_tools(tools)
 
+    # Create classifier node
+    def classify_query(state: AgentState):
+        """Classify the user query into DOCUMENT_QA, DATA_ANALYSIS, or BOTH."""
+        messages = state["messages"]
+        logger.info("=" * 60)
+        logger.info("NODE: classify_query")
+        
+        # Get the last user message
+        user_message = None
+        for msg in reversed(messages):
+            if hasattr(msg, "type") and msg.type == "human":
+                user_message = msg
+                break
+        
+        if not user_message:
+            # Default to DATA_ANALYSIS if no user message found
+            classification = "DATA_ANALYSIS"
+        else:
+            # Use LLM to classify
+            prompt = CLASSIFICATION_PROMPT.invoke({"messages": [user_message]})
+            response = llm.invoke(prompt.messages)
+            classification_text = response.content.strip().upper()
+            
+            # Parse classification
+            if "DOCUMENT_QA" in classification_text:
+                classification = "DOCUMENT_QA"
+            elif "BOTH" in classification_text:
+                classification = "BOTH"
+            else:
+                classification = "DATA_ANALYSIS"
+        
+        logger.info(f"Query classified as: {classification}")
+        logger.info("=" * 60)
+        return {"query_classification": classification}
+
+    # Create document QA node
+    def document_qa_node(state: AgentState):
+        """Handle pure document/terminology questions."""
+        messages = state["messages"]
+        logger.info("=" * 60)
+        logger.info("NODE: document_qa")
+        
+        # Add knowledge context if available
+        prompt_messages = list(messages)
+        if state.get("knowledge_context"):
+            from langchain_core.messages import SystemMessage
+            prompt_messages.insert(
+                0, SystemMessage(content=f"Knowledge context:\n{state['knowledge_context']}")
+            )
+        
+        prompt = DOCUMENT_QA_PROMPT.invoke({"messages": prompt_messages})
+        response = llm_with_tools.invoke(prompt.messages)
+        
+        logger.info("Document QA response generated")
+        return {"messages": [response]}
+
+    # Create knowledge enrichment node
+    def knowledge_enrichment_node(state: AgentState):
+        """Enrich data analysis queries with document knowledge."""
+        messages = state["messages"]
+        logger.info("=" * 60)
+        logger.info("NODE: knowledge_enrichment")
+        
+        # Get the last user message
+        user_message = None
+        for msg in reversed(messages):
+            if hasattr(msg, "type") and msg.type == "human":
+                user_message = msg
+                break
+        
+        if not user_message:
+            return {"knowledge_context": ""}
+        
+        # Use LLM to identify terms and look them up
+        prompt = KNOWLEDGE_ENRICHMENT_PROMPT.invoke({"messages": [user_message]})
+        llm_with_knowledge_tools = llm.bind_tools(tools)
+        response = llm_with_knowledge_tools.invoke(prompt.messages)
+        
+        # If LLM wants to call tools, we need to execute them
+        # For now, we'll let the agent node handle tool calls
+        # This node just prepares the context
+        knowledge_context = ""
+        
+        # Check if response has tool calls
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            # Execute knowledge tool calls
+            from langchain_core.messages import ToolMessage
+            tool_results = []
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.get("name", "")
+                tool_args = tool_call.get("args", {})
+                
+                # Find the tool
+                tool_obj = None
+                for t in tools:
+                    if t.name == tool_name:
+                        tool_obj = t
+                        break
+                
+                if tool_obj:
+                    try:
+                        result = tool_obj.invoke(tool_args)
+                        tool_results.append(
+                            ToolMessage(
+                                content=str(result),
+                                tool_call_id=tool_call.get("id", ""),
+                            )
+                        )
+                    except Exception as e:
+                        logger.error(f"Error executing tool {tool_name}: {e}")
+            
+            # Get enriched response
+            enriched_messages = [user_message, response] + tool_results
+            enriched_prompt = KNOWLEDGE_ENRICHMENT_PROMPT.invoke({"messages": enriched_messages})
+            enriched_response = llm.invoke(enriched_prompt.messages)
+            
+            # Extract knowledge context from response
+            knowledge_context = enriched_response.content.strip()
+        else:
+            # No tool calls, use response directly
+            knowledge_context = response.content.strip()
+        
+        logger.info(f"Knowledge context generated: {len(knowledge_context)} characters")
+        logger.info("=" * 60)
+        return {"knowledge_context": knowledge_context}
+
     # Create call_model function with access to llm_with_tools
     def call_model(state: AgentState):
         """Call the LLM with the current state."""
@@ -74,7 +207,17 @@ async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1)
                 logger.debug(
                     f"Last message content: {str(last_message.content)[:200]}..."
                 )
-        prompt = ANALYSIS_PROMPT.invoke({"messages": messages})
+        # Add knowledge context if available
+        prompt_messages = list(messages)
+        if state.get("knowledge_context"):
+            from langchain_core.messages import SystemMessage
+            # Insert knowledge context at the beginning
+            knowledge_msg = SystemMessage(
+                content=f"Document knowledge context:\n{state['knowledge_context']}\n\nUse this context to understand domain terms and map them to dataset columns."
+            )
+            prompt_messages.insert(0, knowledge_msg)
+        
+        prompt = ANALYSIS_PROMPT.invoke({"messages": prompt_messages})
         logger.info("Invoking LLM...")
         response = llm_with_tools.invoke(prompt.messages)
 
@@ -126,13 +269,83 @@ async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1)
         return result
 
     # Add nodes
+    workflow.add_node("classify", classify_query)
+    workflow.add_node("document_qa", document_qa_node)
+    workflow.add_node("knowledge_enrichment", knowledge_enrichment_node)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", call_tools)
 
     # Set entry point
-    workflow.set_entry_point("agent")
+    workflow.set_entry_point("classify")
 
-    # Add conditional edges
+    # Route from classifier
+    def route_after_classify(state: AgentState) -> str:
+        """Route based on query classification."""
+        classification = state.get("query_classification", "DATA_ANALYSIS")
+        logger.info(f"Routing based on classification: {classification}")
+        
+        if classification == "DOCUMENT_QA":
+            return "document_qa"
+        elif classification == "BOTH":
+            return "knowledge_enrichment"
+        else:  # DATA_ANALYSIS
+            return "agent"
+    
+    workflow.add_conditional_edges(
+        "classify",
+        route_after_classify,
+        {
+            "document_qa": "document_qa",
+            "knowledge_enrichment": "knowledge_enrichment",
+            "agent": "agent",
+        },
+    )
+
+    # Route from document_qa
+    def route_after_document_qa(state: AgentState) -> str:
+        """Route after document QA - check if tools are needed."""
+        messages = state["messages"]
+        last_message = messages[-1] if messages else None
+        
+        if (
+            last_message
+            and hasattr(last_message, "tool_calls")
+            and last_message.tool_calls
+        ):
+            return "tools"
+        return "end"
+    
+    workflow.add_conditional_edges(
+        "document_qa",
+        route_after_document_qa,
+        {
+            "tools": "tools",
+            "end": END,
+        },
+    )
+    
+    # Route from tools back to document_qa if we're in document QA mode
+    def route_from_tools(state: AgentState) -> str:
+        """Route from tools - check if we're in document QA mode."""
+        classification = state.get("query_classification", "DATA_ANALYSIS")
+        if classification == "DOCUMENT_QA":
+            return "document_qa"
+        else:
+            return "agent"
+    
+    workflow.add_conditional_edges(
+        "tools",
+        route_from_tools,
+        {
+            "document_qa": "document_qa",
+            "agent": "agent",
+        },
+    )
+
+    # Route from knowledge_enrichment to agent
+    workflow.add_edge("knowledge_enrichment", "agent")
+
+    # Add conditional edges from agent
     workflow.add_conditional_edges(
         "agent",
         should_continue,
@@ -142,8 +355,7 @@ async def create_agent(model_name: str = "gpt-5-mini", temperature: float = 0.1)
         },
     )
 
-    # Add edge from tools back to agent
-    workflow.add_edge("tools", "agent")
+    # Tools routing is handled by conditional edges above
 
     # Compile with memory
     memory = MemorySaver()
