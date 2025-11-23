@@ -1,5 +1,6 @@
 """LangGraph definition for the data analysis agent."""
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -17,13 +18,12 @@ from .llm_utils import initialize_llm
 from .mcp_tool_loader import MCPToolLoader
 from .prompts import (
     ANALYSIS_PROMPT,
-    CLASSIFICATION_PROMPT,
+    COMBINED_CLASSIFICATION_PROMPT,
     CONFLUENCE_QUERY_UNDERSTANDING_PROMPT,
-    DOC_ACTION_CLASSIFICATION_PROMPT,
     DOCUMENT_QA_PROMPT,
     KNOWLEDGE_ENRICHMENT_PROMPT,
 )
-from .settings import get_settings
+from .settings import LLMProvider, get_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,8 +92,47 @@ async def create_agent():
     # Initialize the LLM from settings
     llm = initialize_llm(settings.chat_llm)
 
+    # Create a low-temperature LLM for JSON nodes (0.0-0.2)
+    json_temperature = min(0.2, max(0.0, settings.chat_llm.temperature))
+
+    # For JSON nodes, also enable JSON mode if using QwenOllama
+    json_llm_config = None
+    if (
+        json_temperature != settings.chat_llm.temperature
+        or settings.chat_llm.llm_model_provider == LLMProvider.QWEN_OLLAMA
+    ):
+        # Use Pydantic's model_copy to create a copy with modified temperature
+        json_llm_config = settings.chat_llm.model_copy(
+            update={"temperature": json_temperature}
+        )
+
+        # Enable JSON mode for QwenOllama by passing response_format through llm_params
+        if settings.chat_llm.llm_model_provider == LLMProvider.QWEN_OLLAMA:
+            logger.info("Enabled JSON mode for QwenOllama in JSON nodes")
+            # Pass response_format through llm_params so initialize_llm can handle it
+            json_llm_config = json_llm_config.model_copy(
+                update={
+                    "llm_params": {
+                        **json_llm_config.llm_params,
+                        "response_format": {"type": "json_object"},
+                    },
+                }
+            )
+        llm_json = initialize_llm(json_llm_config)
+    else:
+        llm_json = llm
+
     # Bind tools to the LLM
-    llm_with_tools = llm.bind_tools(tools)
+    # For Qwen models, use tool_choice for stable behavior
+    tool_choice = None
+    if settings.chat_llm.llm_model_provider == LLMProvider.QWEN_OLLAMA:
+        tool_choice = getattr(settings.chat_llm, "tool_choice", "required")
+        logger.info(f"Using tool_choice='{tool_choice}' for QwenOllama")
+
+    if tool_choice:
+        llm_with_tools = llm.bind_tools(tools, tool_choice=tool_choice)
+    else:
+        llm_with_tools = llm.bind_tools(tools)
 
     # Create classifier node
     def classify_query(state: AgentState):
@@ -114,33 +153,54 @@ async def create_agent():
             classification = "DATA_ANALYSIS"
             doc_action = "NONE"
         else:
-            # Use LLM to classify query type
-            prompt = CLASSIFICATION_PROMPT.invoke({"messages": [user_message]})
-            response = llm.invoke(prompt.messages)
-            classification_text = response.content.strip().upper()
+            # Use LLM to classify both query type and doc_action in a single call (use low-temperature LLM for structured output)
+            prompt = COMBINED_CLASSIFICATION_PROMPT.invoke({"messages": [user_message]})
+            response = llm_json.invoke(prompt.messages)
+            response_text = response.content.strip()
 
-            # Parse classification
-            if "DOCUMENT_QA" in classification_text:
-                classification = "DOCUMENT_QA"
-            elif "BOTH" in classification_text:
-                classification = "BOTH"
-            else:
-                classification = "DATA_ANALYSIS"
+            # Parse JSON response
+            try:
+                classification_data = json.loads(response_text)
+                classification = classification_data.get(
+                    "query_classification", "DATA_ANALYSIS"
+                )
+                doc_action = classification_data.get("doc_action", "NONE")
 
-            # Use LLM to classify doc_action
-            doc_action_prompt = DOC_ACTION_CLASSIFICATION_PROMPT.invoke(
-                {"messages": [user_message]}
-            )
-            doc_action_response = llm.invoke(doc_action_prompt.messages)
-            doc_action_text = doc_action_response.content.strip().upper()
+                # Validate classification values
+                if classification not in ["DOCUMENT_QA", "DATA_ANALYSIS", "BOTH"]:
+                    logger.warning(
+                        f"Invalid query_classification: {classification}, defaulting to DATA_ANALYSIS"
+                    )
+                    classification = "DATA_ANALYSIS"
 
-            # Parse doc_action
-            if "FROM_ANALYSIS" in doc_action_text:
-                doc_action = "FROM_ANALYSIS"
-            elif "FROM_CONFLUENCE" in doc_action_text:
-                doc_action = "FROM_CONFLUENCE"
-            else:
-                doc_action = "NONE"
+                if doc_action not in ["FROM_ANALYSIS", "FROM_CONFLUENCE", "NONE"]:
+                    logger.warning(
+                        f"Invalid doc_action: {doc_action}, defaulting to NONE"
+                    )
+                    doc_action = "NONE"
+
+            except (ValueError, json.JSONDecodeError, TypeError) as e:
+                logger.warning(
+                    f"Failed to parse JSON response: {e}. Response: {response_text[:200]}"
+                )
+                # Fallback: try to parse as text (backward compatibility)
+                response_upper = response_text.upper()
+
+                # Parse classification
+                if "DOCUMENT_QA" in response_upper:
+                    classification = "DOCUMENT_QA"
+                elif "BOTH" in response_upper:
+                    classification = "BOTH"
+                else:
+                    classification = "DATA_ANALYSIS"
+
+                # Parse doc_action
+                if "FROM_ANALYSIS" in response_upper:
+                    doc_action = "FROM_ANALYSIS"
+                elif "FROM_CONFLUENCE" in response_upper:
+                    doc_action = "FROM_CONFLUENCE"
+                else:
+                    doc_action = "NONE"
 
         logger.info(f"Query classified as: {classification}")
         logger.info(f"Doc action classified as: {doc_action}")
@@ -226,7 +286,11 @@ async def create_agent():
 
         # Use LLM to identify terms and look them up
         prompt = KNOWLEDGE_ENRICHMENT_PROMPT.invoke({"messages": [user_message]})
-        llm_with_knowledge_tools = llm.bind_tools(tools)
+        # Use same tool_choice as main LLM for consistency
+        if tool_choice:
+            llm_with_knowledge_tools = llm.bind_tools(tools, tool_choice=tool_choice)
+        else:
+            llm_with_knowledge_tools = llm.bind_tools(tools)
         response = llm_with_knowledge_tools.invoke(prompt.messages)
 
         # If LLM wants to call tools, we need to execute them
@@ -321,6 +385,44 @@ async def create_agent():
             )
             prompt_messages.insert(0, knowledge_msg)
 
+        # Check if we have tool responses but haven't called run_analysis yet
+        # This helps prevent Qwen (and other models) from stopping after list_datasets
+        from langchain_core.messages import ToolMessage
+
+        has_tool_responses = False
+        has_run_analysis = False
+        for msg in messages:
+            # Check for tool responses (ToolMessage)
+            if isinstance(msg, ToolMessage):
+                has_tool_responses = True
+                # Check if run_analysis was called
+                tool_name = getattr(msg, "name", "")
+                if tool_name == "run_analysis":
+                    has_run_analysis = True
+            # Also check for tool calls in AIMessage
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    tool_name = getattr(tool_call, "name", "")
+                    if tool_name == "run_analysis":
+                        has_run_analysis = True
+
+        # If we have tool responses but no run_analysis yet, inject a reminder
+        # This is especially important for Qwen which might stop after list_datasets
+        if has_tool_responses and not has_run_analysis:
+            from langchain_core.messages import SystemMessage
+
+            reminder_msg = SystemMessage(
+                content="REMINDER: You have received tool responses (e.g., from list_datasets or get_dataset_schema). "
+                "These are INTERMEDIATE INFORMATION, not final answers. "
+                "You MUST continue the workflow by generating Python code and calling run_analysis to execute the actual data analysis. "
+                "DO NOT stop and present tool responses as your final answer. "
+                "The workflow is only complete after you have called run_analysis and received actual analysis results."
+            )
+            prompt_messages.insert(0, reminder_msg)
+            logger.info(
+                "Injected reminder: tool responses detected but run_analysis not called yet"
+            )
+
         prompt = ANALYSIS_PROMPT.invoke({"messages": prompt_messages})
         logger.info("Invoking LLM...")
         response = llm_with_tools.invoke(prompt.messages)
@@ -366,8 +468,6 @@ async def create_agent():
                     content = msg.content
                     if isinstance(content, str):
                         # Try to parse JSON if it's a string
-                        import json
-
                         try:
                             result = json.loads(content)
                             recent_analysis["result_preview"] = result.get(
@@ -375,7 +475,7 @@ async def create_agent():
                             )
                             recent_analysis["plot_path"] = result.get("plot_path")
                             analysis_found = True
-                        except (json.JSONDecodeError, TypeError):
+                        except (ValueError, TypeError, json.JSONDecodeError):
                             pass
                     elif isinstance(content, dict):
                         recent_analysis["result_preview"] = content.get(
@@ -626,11 +726,9 @@ Generate the full Confluence page content in markdown format."""
 
             # Parse result - adapt based on actual tool response format
             if isinstance(result, str):
-                import json
-
                 try:
                     result = json.loads(result)
-                except (json.JSONDecodeError, TypeError):
+                except (ValueError, TypeError, json.JSONDecodeError):
                     pass
 
             # Check for error in result
@@ -740,37 +838,28 @@ Generate the full Confluence page content in markdown format."""
             error_msg = AIMessage(content="No query provided for Confluence search.")
             return {"messages": [error_msg]}
 
-        # Use LLM to understand and reformulate the query
+        # Use LLM to understand and reformulate the query (use low-temperature LLM for JSON output)
         from langchain_core.messages import HumanMessage
 
         prompt = CONFLUENCE_QUERY_UNDERSTANDING_PROMPT.invoke(
             {"messages": [HumanMessage(content=user_query)]}
         )
-        response = llm.invoke(prompt.messages)
+        response = llm_json.invoke(prompt.messages)
         response_text = response.content.strip()
 
         # Parse JSON response
-        import json
-        import re
-
         try:
-            # Try to extract JSON from the response
-            json_match = re.search(r"\{[^}]+\}", response_text, re.DOTALL)
-            if json_match:
-                query_info = json.loads(json_match.group())
-            else:
-                # Fallback: try parsing the whole response
-                query_info = json.loads(response_text)
-        except (json.JSONDecodeError, AttributeError):
-            # Fallback: create a default reformulation
+            query_info = json.loads(response_text)
+        except (ValueError, json.JSONDecodeError):
             logger.warning(
-                f"Could not parse LLM response as JSON: {response_text}. Using default reformulation."
+                f"Could not parse LLM response as JSON: {response_text[:200]}. Using fallback."
             )
+            # Fallback: create a default reformulation
             query_info = {
                 "query_type": "SPECIFIC_SEARCH",
                 "search_query": user_query,
                 "is_meta_question": False,
-                "explanation": "Using original query as fallback",
+                "explanation": "Using original query as fallback after parse failure",
             }
 
         search_query = query_info.get("search_query", user_query)
@@ -967,7 +1056,14 @@ Generate the full Confluence page content in markdown format."""
                 results_text += f"   URL: {url}\n"
             results_text += f"   ID: {page_id}\n"
 
-        system_prompt = """You are selecting the most relevant Confluence page from search results.
+        system_prompt = """You are a function-calling engine inside a deterministic agent.
+
+You MUST output ONLY one word or number and NOTHING else.
+
+Rules:
+- No natural language before or after the selection.
+- No backticks, no comments, no explanations.
+- Output ONLY the number (1-5) or "NONE".
 
 Given the user's query and the search results, select the ONE most relevant page.
 Respond with ONLY the number (1-5) of the most relevant page.
@@ -984,7 +1080,8 @@ Which page is most relevant? Respond with the number (1-5) or "NONE"."""
             HumanMessage(content=user_prompt),
         ]
 
-        response = llm.invoke(prompt_messages)
+        # Use low-temperature LLM for structured output
+        response = llm_json.invoke(prompt_messages)
         selection_text = response.content.strip()
 
         # Parse selection

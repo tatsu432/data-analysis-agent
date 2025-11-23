@@ -190,12 +190,13 @@ with st.sidebar:
     st.header("Example Queries")
     example_queries = [
         "How does the number of patients vary from January to July 2022 in Tokyo?",
-        "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
-        "What characteristics does the patient count data have overall?",
-        "Can you model the Tokyo's covid case and tell me the model clearly?",
-        "Can you compare the each product's number of patients over the time for GP only?",
-        "Can you generate the line plots of the number of the patients for each product only for those at risk over the time?",
-        "Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE."
+        # "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
+        # "What characteristics does the patient count data have overall?",
+        # "Can you model the Tokyo's covid case and tell me the model clearly?",
+        # "Can you compare the each product's number of patients over the time for GP only?",
+        # "Can you generate the line plots of the number of the patients for each product only for those at risk over the time?",
+        # "Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE."
+        "2022年1月から2022年12月までの東京のコロナウイルス感染者数を図にして、要約して"
     ]
 
     for query in example_queries:

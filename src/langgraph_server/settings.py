@@ -86,7 +86,10 @@ class LocalLLMSettings(BaseLLMModelSettings):
 
 
 class QwenOllamaSettings(BaseLLMModelSettings):
-    """Settings for Qwen models via Ollama with custom LangSmith type."""
+    """Settings for Qwen models via Ollama.
+
+    This uses Ollama's OpenAI-compatible API, same as LocalLLMSettings.
+    """
 
     llm_model_provider: Literal[LLMProvider.QWEN_OLLAMA] = LLMProvider.QWEN_OLLAMA
     base_url: str = Field(
@@ -97,15 +100,20 @@ class QwenOllamaSettings(BaseLLMModelSettings):
         default=None,
         description="Optional API key (dummy key will be used if not provided)",
     )
+    tool_choice: Literal["auto", "required", "none"] | str | None = Field(
+        default="required",
+        description="Tool choice behavior: 'auto' (model decides), 'required' (must use a tool), 'none' (no tools), or specific tool name",
+    )
 
     @property
     def llm_params(self) -> dict[str, Any]:
-        """Return parameters for QwenOllama wrapper.
+        """Return parameters for Ollama's OpenAI-compatible API.
 
-        Note: These params are used by initialize_llm to create the QwenOllama instance.
+        Note: These params are used by initialize_llm to create the model instance.
         """
         return {
             "base_url": self.base_url,
+            "model_provider": "openai",  # Use OpenAI-compatible API
             "api_key": self.api_key or "ollama",
         }
 
