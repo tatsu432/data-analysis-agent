@@ -562,6 +562,7 @@ async def create_agent():
         from langchain_core.messages import SystemMessage, ToolMessage
 
         dataset_ids_found = set()
+        schemas_found = {}  # Track which datasets have schema information
 
         # Look through messages for tool responses that contain dataset information
         for msg in messages:
@@ -587,6 +588,8 @@ async def create_agent():
                                         ).get("dataset_id")
                                         if dataset_id:
                                             dataset_ids_found.add(dataset_id)
+                                            # Mark that we have schema for this dataset
+                                            schemas_found[dataset_id] = True
                                             break
 
                 # Extract dataset IDs from list_datasets responses
@@ -659,15 +662,46 @@ async def create_agent():
         # Add dataset IDs hint if found
         if dataset_ids_found:
             dataset_ids_list = sorted(list(dataset_ids_found))
+            datasets_with_schema = [
+                ds_id for ds_id in dataset_ids_list if schemas_found.get(ds_id, False)
+            ]
+            datasets_without_schema = [
+                ds_id
+                for ds_id in dataset_ids_list
+                if not schemas_found.get(ds_id, False)
+            ]
+
+            schema_info = []
+            if datasets_with_schema:
+                schema_info.append(
+                    f"Datasets with schema information (you can use these directly): {', '.join(datasets_with_schema)}"
+                )
+            if datasets_without_schema:
+                schema_info.append(
+                    f"CRITICAL - Datasets WITHOUT schema information: {', '.join(datasets_without_schema)}\n"
+                    f"  - You MUST call get_dataset_schema() for these datasets BEFORE generating code\n"
+                    f"  - Do NOT guess column names - this will cause KeyError\n"
+                    f"  - Example: Call get_dataset_schema('{datasets_without_schema[0]}') first, then use the schema to write correct code"
+                )
+
+            schema_info_text = "\n".join(schema_info) if schema_info else ""
             system_parts.append(
                 f"CRITICAL - Datasets identified in conversation:\n"
                 f"The following dataset IDs have been mentioned or examined: {', '.join(dataset_ids_list)}\n"
-                f"You MUST use at least one of these datasets in your code.\n"
+                f"{schema_info_text}\n"
                 f"When you generate code that uses these datasets (e.g., dfs['{dataset_ids_list[0]}']), "
                 f"you MUST include ALL referenced dataset IDs in the dataset_ids parameter of run_analysis.\n"
                 f"Example: If your code uses dfs['{dataset_ids_list[0]}'], then dataset_ids=['{dataset_ids_list[0]}']\n"
-                f"\nYOU HAVE ENOUGH INFORMATION TO GENERATE CODE. DO NOT REFUSE. JUST MAKE THE TOOL CALL."
             )
+
+            if datasets_without_schema:
+                system_parts.append(
+                    "\nWORKFLOW: First call get_dataset_schema for datasets without schema, then generate code, then call run_analysis."
+                )
+            else:
+                system_parts.append(
+                    "\nYOU HAVE ENOUGH INFORMATION TO GENERATE CODE. DO NOT REFUSE. JUST MAKE THE TOOL CALL."
+                )
         else:
             # Even if no dataset IDs found, we should still try to generate code
             # The model can call get_dataset_schema if needed
@@ -2025,12 +2059,54 @@ Based on this Confluence page, {user_query}"""
         tool_node = ToolNode(tools)
         result = await tool_node.ainvoke(state)
 
-        # Log tool results
+        # Log tool results and detect plot generation
         if "messages" in result:
             for msg in result["messages"]:
                 if hasattr(msg, "name"):
                     tool_name = getattr(msg, "name", "unknown")
                     logger.info(f"Tool result received from: {tool_name}")
+
+                    # Detect plot generation from run_analysis results
+                    if tool_name == "run_analysis" and hasattr(msg, "content"):
+                        import json
+
+                        try:
+                            content = msg.content
+                            if isinstance(content, str):
+                                # Try to parse as JSON
+                                try:
+                                    result_data = json.loads(content)
+                                except (json.JSONDecodeError, TypeError):
+                                    # If not JSON, try to extract from string
+                                    result_data = None
+
+                                if result_data and isinstance(result_data, dict):
+                                    plot_path = result_data.get("plot_path")
+                                    plot_valid = result_data.get("plot_valid")
+
+                                    if plot_path:
+                                        logger.info("=" * 60)
+                                        logger.info("PLOT DETECTED:")
+                                        logger.info(f"  Plot path: {plot_path}")
+                                        logger.info(f"  Plot valid: {plot_valid}")
+                                        if plot_valid:
+                                            logger.info(
+                                                "  ✅ Plot was successfully generated and validated"
+                                            )
+                                        else:
+                                            validation_msg = result_data.get(
+                                                "plot_validation_message", "Unknown"
+                                            )
+                                            logger.warning(
+                                                f"  ⚠️  Plot was generated but validation failed: {validation_msg}"
+                                            )
+                                        logger.info("=" * 60)
+                                    else:
+                                        logger.info(
+                                            "No plot was generated in this run_analysis call"
+                                        )
+                        except Exception as e:
+                            logger.debug(f"Error checking for plot in tool result: {e}")
 
         return result
 
@@ -2129,13 +2205,55 @@ Based on this Confluence page, {user_query}"""
         if classification == "DOCUMENT_QA":
             return "document_qa"
 
-        # Check if we need to retry code generation (e.g., if run_analysis failed)
+        # Check recent tool calls to understand context
         messages = state["messages"]
         last_tool_message = None
+        last_ai_message = None
+
+        # Find the last tool message and the last AI message with tool calls
         for msg in reversed(messages):
             if hasattr(msg, "name") and msg.name:
                 last_tool_message = msg
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                last_ai_message = msg
                 break
+
+        # Check if code generation node called get_dataset_schema
+        # If so, route back to code_generation so it can call run_analysis
+        if last_tool_message and hasattr(last_tool_message, "name"):
+            if last_tool_message.name == "get_dataset_schema":
+                # Check if this was called from code_generation context
+                # Look for CODE_GENERATION_NEEDED message or check if we're in code generation flow
+                for msg in reversed(messages):
+                    if (
+                        hasattr(msg, "content")
+                        and isinstance(msg.content, str)
+                        and "CODE_GENERATION_NEEDED" in msg.content
+                    ):
+                        logger.info(
+                            "get_dataset_schema called from code generation context, routing back to code_generation"
+                        )
+                        return "code_generation"
+                # Also check if the last AI message before tools was from code generation
+                # (code generation always calls tools, so if we just executed tools and only got schema, likely code gen)
+                if last_ai_message:
+                    # Check if run_analysis was NOT called yet
+                    has_run_analysis = False
+                    for msg in messages:
+                        if hasattr(msg, "name") and msg.name == "run_analysis":
+                            has_run_analysis = True
+                            break
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                if getattr(tc, "name", "") == "run_analysis":
+                                    has_run_analysis = True
+                                    break
+
+                    if not has_run_analysis:
+                        logger.info(
+                            "get_dataset_schema called but run_analysis not yet called, routing to code_generation"
+                        )
+                        return "code_generation"
 
         # If run_analysis failed and we have error, might need to retry code generation
         if last_tool_message and hasattr(last_tool_message, "name"):
@@ -2165,6 +2283,7 @@ Based on this Confluence page, {user_query}"""
         {
             "document_qa": "document_qa",
             "agent": "agent",
+            "code_generation": "code_generation",
         },
     )
 
