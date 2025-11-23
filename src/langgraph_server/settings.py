@@ -61,7 +61,13 @@ class AnthropicSettings(BaseLLMModelSettings, ApiKeySettings):
 
 
 class LocalLLMSettings(BaseLLMModelSettings):
-    """Settings for local LLM hosting (Ollama, OpenAI-compatible servers)."""
+    """Settings for local LLM hosting (Ollama, OpenAI-compatible servers).
+
+    Supports models like:
+    - qwen3-coder:latest
+    - gpt-oss:20b
+    - Any other Ollama models
+    """
 
     llm_model_provider: Literal[LLMProvider.LOCAL] = LLMProvider.LOCAL
     base_url: str = Field(
@@ -71,6 +77,10 @@ class LocalLLMSettings(BaseLLMModelSettings):
     api_key: str | None = Field(
         default=None,
         description="Optional API key for local LLM server (usually not required)",
+    )
+    tool_choice: Literal["auto", "required", "none"] | str | None = Field(
+        default=None,
+        description="Tool choice behavior: 'auto' (model decides), 'required' (must use a tool), 'none' (no tools), or specific tool name. Defaults to 'required' for code generation.",
     )
 
     @property
@@ -160,6 +170,7 @@ class Settings(BaseSettings):
 
     # LLM settings
     chat_llm: LLMSettings = Field(alias="CHAT_NODE")
+    coding_llm: OptionalLLMSettings = Field(default=None, alias="CODING_NODE")
 
 
 @lru_cache
@@ -188,11 +199,19 @@ def get_settings() -> Settings:
             "  CHAT_NODE__temperature=0.1\n"
             "  CHAT_NODE__api_key=your_api_key\n"
             "\n"
-            "Example for Local LLM (Ollama):\n"
+            "Example for Local LLM (Ollama) - Qwen:\n"
             "  CHAT_NODE__llm_model_provider=local\n"
-            "  CHAT_NODE__llm_model_name=qwen2.5-coder:14b\n"
+            "  CHAT_NODE__llm_model_name=qwen3-coder:latest\n"
             "  CHAT_NODE__temperature=0.1\n"
-            "  CHAT_NODE__base_url=http://localhost:11434/v1"
+            "  CHAT_NODE__base_url=http://localhost:11434/v1\n"
+            "  CHAT_NODE__tool_choice=required\n"
+            "\n"
+            "Example for Local LLM (Ollama) - GPT-OSS:\n"
+            "  CHAT_NODE__llm_model_provider=local\n"
+            "  CHAT_NODE__llm_model_name=gpt-oss:20b\n"
+            "  CHAT_NODE__temperature=0.1\n"
+            "  CHAT_NODE__base_url=http://localhost:11434/v1\n"
+            "  CHAT_NODE__tool_choice=required"
         )
         raise ValueError(
             "CHAT_NODE configuration is required. "
@@ -201,11 +220,22 @@ def get_settings() -> Settings:
         )
 
     logger.info(
-        "✅ Settings loaded: LLM Model='%s' (Provider='%s', Temperature=%.2f)",
+        "✅ Settings loaded: Main LLM Model='%s' (Provider='%s', Temperature=%.2f)",
         settings.chat_llm.llm_model_name,
         settings.chat_llm.llm_model_provider,
         settings.chat_llm.temperature,
     )
+    if settings.coding_llm:
+        logger.info(
+            "✅ Settings loaded: Coding LLM Model='%s' (Provider='%s', Temperature=%.2f)",
+            settings.coding_llm.llm_model_name,
+            settings.coding_llm.llm_model_provider,
+            settings.coding_llm.temperature,
+        )
+    else:
+        logger.info(
+            "ℹ️  No separate coding LLM configured - main LLM will be used for code generation"
+        )
     if settings.confluence_mcp_server_url:
         logger.info(
             "✅ Settings loaded: CONFLUENCE_MCP_SERVER_URL=%s",

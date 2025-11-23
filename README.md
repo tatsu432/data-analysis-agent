@@ -678,25 +678,38 @@ CHAT_NODE__api_key=your_openai_api_key
 # CHAT_NODE__temperature=0.1
 # CHAT_NODE__api_key=your_anthropic_api_key
 
-# Example: Local LLM (Ollama or other OpenAI-compatible server)
+# Example: Local LLM (Ollama) - Qwen models
 # CHAT_NODE__llm_model_provider=local
-# CHAT_NODE__llm_model_name=qwen2.5-coder:14b  # Model name for Ollama
+# CHAT_NODE__llm_model_name=qwen3-coder:latest  # Model name for Ollama
 # CHAT_NODE__temperature=0.1
 # CHAT_NODE__base_url=http://localhost:11434/v1  # Ollama default endpoint
+# CHAT_NODE__tool_choice=required  # Recommended for Qwen models
+# CHAT_NODE__api_key=  # Optional - a dummy key will be used if not provided
+#
+# Example: Local LLM (Ollama) - GPT-OSS models
+# CHAT_NODE__llm_model_provider=local
+# CHAT_NODE__llm_model_name=gpt-oss:20b  # Model name for Ollama
+# CHAT_NODE__temperature=0.1
+# CHAT_NODE__base_url=http://localhost:11434/v1  # Ollama default endpoint
+# CHAT_NODE__tool_choice=required  # Recommended for GPT-OSS models
 # CHAT_NODE__api_key=  # Optional - a dummy key will be used if not provided
 #
 # Example: Qwen via Ollama (recommended for Qwen models - shows as 'qwen_ollama' in LangSmith)
 # CHAT_NODE__llm_model_provider=qwen_ollama
-# CHAT_NODE__llm_model_name=qwen2.5-coder:14b
+# CHAT_NODE__llm_model_name=qwen3-coder:latest
 # CHAT_NODE__temperature=0.1
 # CHAT_NODE__base_url=http://localhost:11434/v1  # Ollama default endpoint
+# CHAT_NODE__tool_choice=required  # Recommended for Qwen models
 # CHAT_NODE__api_key=  # Optional - a dummy key will be used if not provided
 #
 # Note: For Ollama, make sure the server is running:
 #   - Install: brew install ollama (macOS) or see https://ollama.ai
 #   - Start service: brew services start ollama
-#   - Pull model: ollama pull qwen2.5-coder:14b
+#   - Pull models:
+#     * For Qwen: ollama pull qwen3-coder:latest
+#     * For GPT-OSS: ollama pull gpt-oss:20b
 #   - Verify: curl http://localhost:11434/api/version
+#   - List available models: ollama list
 #
 # Note: The API key is optional for local LLMs. If not provided, a dummy
 #       key will be used automatically (most local servers accept any key or ignore it).

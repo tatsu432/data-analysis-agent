@@ -18,6 +18,7 @@ from .llm_utils import initialize_llm
 from .mcp_tool_loader import MCPToolLoader
 from .prompts import (
     ANALYSIS_PROMPT,
+    CODE_GENERATION_PROMPT,
     COMBINED_CLASSIFICATION_PROMPT,
     CONFLUENCE_QUERY_UNDERSTANDING_PROMPT,
     DOCUMENT_QA_PROMPT,
@@ -63,12 +64,22 @@ async def create_agent():
     """
     Create the data analysis agent graph.
 
-    LLM configuration is loaded from environment variables using the CHAT_NODE prefix.
+    LLM configuration is loaded from environment variables:
+    - CHAT_NODE prefix for the main reasoning agent
+    - CODING_NODE prefix (optional) for the code generation agent
+
     For example:
         CHAT_NODE__llm_model_provider=openai
-        CHAT_NODE__llm_model_name=gpt-5.1
+        CHAT_NODE__llm_model_name=gpt-4o
         CHAT_NODE__temperature=0.1
         CHAT_NODE__api_key=sk-...
+
+        CODING_NODE__llm_model_provider=openai
+        CODING_NODE__llm_model_name=gpt-4o
+        CODING_NODE__temperature=0.1
+        CODING_NODE__api_key=sk-...
+
+    If CODING_NODE is not configured, the main LLM (CHAT_NODE) will be used for code generation.
 
     Returns:
         Compiled LangGraph StateGraph
@@ -92,7 +103,7 @@ async def create_agent():
         logger.info("  - %s", tool_name)
     logger.info("=" * 60)
 
-    # Initialize the LLM from settings
+    # Initialize the main reasoning LLM from settings
     llm = initialize_llm(settings.chat_llm)
 
     # Create a low-temperature LLM for JSON nodes (0.0-0.2)
@@ -125,17 +136,91 @@ async def create_agent():
     else:
         llm_json = llm
 
-    # Bind tools to the LLM
-    # For Qwen models, use tool_choice for stable behavior
+    # Bind tools to the main LLM
+    # For Qwen and GPT-OSS models, use tool_choice for stable behavior
     tool_choice = None
+    chat_model_name_lower = settings.chat_llm.llm_model_name.lower()
+    is_chat_qwen = "qwen" in chat_model_name_lower
+    is_chat_gpt_oss = (
+        "gpt-oss" in chat_model_name_lower or "gpt_oss" in chat_model_name_lower
+    )
+
     if settings.chat_llm.llm_model_provider == LLMProvider.QWEN_OLLAMA:
         tool_choice = getattr(settings.chat_llm, "tool_choice", "required")
         logger.info(f"Using tool_choice='{tool_choice}' for QwenOllama")
+    elif settings.chat_llm.llm_model_provider == LLMProvider.LOCAL and (
+        is_chat_qwen or is_chat_gpt_oss
+    ):
+        tool_choice = getattr(settings.chat_llm, "tool_choice", "required")
+        model_type = "Qwen" if is_chat_qwen else "GPT-OSS"
+        logger.info(
+            f"Using tool_choice='{tool_choice}' for {model_type} model ({settings.chat_llm.llm_model_name})"
+        )
 
     if tool_choice:
         llm_with_tools = llm.bind_tools(tools, tool_choice=tool_choice)
     else:
         llm_with_tools = llm.bind_tools(tools)
+
+    # Filter tools for code generation - only get_dataset_schema and run_analysis
+    coding_tools = [
+        tool for tool in tools if tool.name in ["get_dataset_schema", "run_analysis"]
+    ]
+    coding_tool_names = [tool.name for tool in coding_tools]
+    logger.info("=" * 60)
+    logger.info("Code generation tools (limited set): %d tools", len(coding_tools))
+    for tool_name in coding_tool_names:
+        logger.info("  - %s", tool_name)
+    logger.info("=" * 60)
+
+    # Initialize the coding LLM if configured, otherwise use main LLM
+    # CRITICAL: Force tool_choice="required" for coding LLM to ensure it always makes tool calls
+    # This prevents the model from outputting natural language explanations instead of tool calls
+    if settings.coding_llm:
+        logger.info(
+            f"Using separate coding LLM: {settings.coding_llm.llm_model_name} "
+            f"(provider: {settings.coding_llm.llm_model_provider})"
+        )
+        coding_llm = initialize_llm(settings.coding_llm)
+        # Force tool_choice="required" for coding LLM to ensure tool calls are always made
+        # Allow override via settings, but default to "required"
+        coding_tool_choice = getattr(settings.coding_llm, "tool_choice", "required")
+        # For Qwen models (QWEN_OLLAMA or LOCAL with Qwen/gpt-oss), always use "required"
+        model_name_lower = settings.coding_llm.llm_model_name.lower()
+        is_qwen_model = "qwen" in model_name_lower
+        is_gpt_oss_model = (
+            "gpt-oss" in model_name_lower or "gpt_oss" in model_name_lower
+        )
+        if settings.coding_llm.llm_model_provider in (
+            LLMProvider.QWEN_OLLAMA,
+            LLMProvider.LOCAL,
+        ) and (is_qwen_model or is_gpt_oss_model):
+            coding_tool_choice = "required"
+            logger.info(
+                f"Detected {'Qwen' if is_qwen_model else 'GPT-OSS'} model: {settings.coding_llm.llm_model_name}, "
+                f"forcing tool_choice='required'"
+            )
+        logger.info(
+            f"Using tool_choice='{coding_tool_choice}' for coding LLM "
+            f"(provider: {settings.coding_llm.llm_model_provider})"
+        )
+        coding_llm_with_tools = coding_llm.bind_tools(
+            coding_tools, tool_choice=coding_tool_choice
+        )
+    else:
+        logger.info(
+            "No separate coding LLM configured, using main LLM for code generation"
+        )
+        coding_llm = llm
+        # Force tool_choice="required" for code generation even when using main LLM
+        # This ensures code generation always produces tool calls
+        coding_tool_choice = "required"
+        logger.info(
+            f"Using tool_choice='{coding_tool_choice}' for code generation (using main LLM)"
+        )
+        coding_llm_with_tools = llm.bind_tools(
+            coding_tools, tool_choice=coding_tool_choice
+        )
 
     # Create classifier node
     def classify_query(state: AgentState):
@@ -409,17 +494,40 @@ async def create_agent():
                     if tool_name == "run_analysis":
                         has_run_analysis = True
 
-        # If we have tool responses but no run_analysis yet, inject a reminder
+        # If we have tool responses but no run_analysis yet, check if we should route to code generation
         # This is especially important for Qwen which might stop after list_datasets
         if has_tool_responses and not has_run_analysis:
+            # Check if we have dataset information (from list_datasets or get_dataset_schema)
+            has_dataset_info = False
+            for msg in messages:
+                if isinstance(msg, ToolMessage):
+                    tool_name = getattr(msg, "name", "")
+                    if tool_name in ["list_datasets", "get_dataset_schema"]:
+                        has_dataset_info = True
+                        break
+
+            if has_dataset_info:
+                # We have dataset info but no code generated yet - route to code generation
+                logger.info(
+                    "Dataset information available but no code generated - routing to code generation node"
+                )
+                # Return a special marker to indicate code generation is needed
+                from langchain_core.messages import AIMessage
+
+                routing_msg = AIMessage(
+                    content="CODE_GENERATION_NEEDED: Dataset information has been gathered. Code generation is required to proceed with the analysis."
+                )
+                return {"messages": [routing_msg]}
+
+            # Otherwise, inject a reminder
             from langchain_core.messages import SystemMessage
 
             reminder_msg = SystemMessage(
                 content="REMINDER: You have received tool responses (e.g., from list_datasets or get_dataset_schema). "
                 "These are INTERMEDIATE INFORMATION, not final answers. "
-                "You MUST continue the workflow by generating Python code and calling run_analysis to execute the actual data analysis. "
+                "You MUST continue the workflow by routing to code generation to execute the actual data analysis. "
                 "DO NOT stop and present tool responses as your final answer. "
-                "The workflow is only complete after you have called run_analysis and received actual analysis results."
+                "The workflow is only complete after code has been generated and run_analysis has been executed."
             )
             prompt_messages.insert(0, reminder_msg)
             logger.info(
@@ -439,6 +547,407 @@ async def create_agent():
         else:
             logger.info("LLM response (no tool calls)")
 
+        return {"messages": [response]}
+
+    # Code generation node
+    def code_generation_node(state: AgentState):
+        """Generate Python code for data analysis using the coding LLM."""
+        messages = state["messages"]
+        logger.info("=" * 60)
+        logger.info("NODE: code_generation")
+
+        # Extract dataset IDs from tool responses
+        import json
+
+        from langchain_core.messages import SystemMessage, ToolMessage
+
+        dataset_ids_found = set()
+
+        # Look through messages for tool responses that contain dataset information
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                tool_name = getattr(msg, "name", "")
+
+                # Extract dataset_id from get_dataset_schema responses
+                if tool_name == "get_dataset_schema":
+                    # Try to extract dataset_id from the tool call that preceded this response
+                    # Look for the tool call in previous messages
+                    for prev_msg in reversed(messages[: messages.index(msg)]):
+                        if hasattr(prev_msg, "tool_calls") and prev_msg.tool_calls:
+                            for tool_call in prev_msg.tool_calls:
+                                if (
+                                    getattr(tool_call, "name", "")
+                                    == "get_dataset_schema"
+                                ):
+                                    args = getattr(tool_call, "args", {})
+                                    if isinstance(args, dict):
+                                        # Handle both direct args and nested payload
+                                        dataset_id = args.get("dataset_id") or args.get(
+                                            "payload", {}
+                                        ).get("dataset_id")
+                                        if dataset_id:
+                                            dataset_ids_found.add(dataset_id)
+                                            break
+
+                # Extract dataset IDs from list_datasets responses
+                elif tool_name == "list_datasets":
+                    try:
+                        # Try to parse the tool response content
+                        content = getattr(msg, "content", "")
+                        data = None
+
+                        if isinstance(content, dict):
+                            # Content is already a dict
+                            data = content
+                        elif isinstance(content, str):
+                            # Try to parse as JSON
+                            try:
+                                data = json.loads(content)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+
+                        if isinstance(data, dict) and "datasets" in data:
+                            for dataset in data["datasets"]:
+                                if isinstance(dataset, dict) and "id" in dataset:
+                                    dataset_ids_found.add(dataset["id"])
+                    except Exception as e:
+                        logger.debug(
+                            f"Error extracting dataset IDs from list_datasets response: {e}"
+                        )
+
+        # Extract the user's original question for clarity
+        user_question = None
+        for msg in messages:
+            if hasattr(msg, "type") and msg.type == "human":
+                user_question = msg.content if hasattr(msg, "content") else str(msg)
+                break
+
+        # Filter out routing messages that might confuse the model
+        filtered_messages = []
+        for msg in messages:
+            # Skip the CODE_GENERATION_NEEDED routing message
+            if (
+                hasattr(msg, "content")
+                and isinstance(msg.content, str)
+                and "CODE_GENERATION_NEEDED" in msg.content
+            ):
+                continue
+            filtered_messages.append(msg)
+
+        # Add knowledge context if available
+        prompt_messages = list(filtered_messages)
+        knowledge_context = state.get("knowledge_context", "")
+
+        # Build system message with context
+        system_parts = []
+
+        if (
+            knowledge_context
+            and knowledge_context.strip()
+            and len(knowledge_context.strip()) > 10
+        ):
+            system_parts.append(
+                f"Document knowledge context:\n{knowledge_context}\n\nUse this context to understand domain terms and map them to dataset columns when writing code."
+            )
+
+        # Add the user's question prominently if available
+        if user_question:
+            system_parts.append(
+                f"USER'S QUESTION (THIS IS WHAT YOU NEED TO ANSWER):\n{user_question}\n"
+            )
+
+        # Add dataset IDs hint if found
+        if dataset_ids_found:
+            dataset_ids_list = sorted(list(dataset_ids_found))
+            system_parts.append(
+                f"CRITICAL - Datasets identified in conversation:\n"
+                f"The following dataset IDs have been mentioned or examined: {', '.join(dataset_ids_list)}\n"
+                f"You MUST use at least one of these datasets in your code.\n"
+                f"When you generate code that uses these datasets (e.g., dfs['{dataset_ids_list[0]}']), "
+                f"you MUST include ALL referenced dataset IDs in the dataset_ids parameter of run_analysis.\n"
+                f"Example: If your code uses dfs['{dataset_ids_list[0]}'], then dataset_ids=['{dataset_ids_list[0]}']\n"
+                f"\nYOU HAVE ENOUGH INFORMATION TO GENERATE CODE. DO NOT REFUSE. JUST MAKE THE TOOL CALL."
+            )
+        else:
+            # Even if no dataset IDs found, we should still try to generate code
+            # The model can call get_dataset_schema if needed
+            system_parts.append(
+                "NOTE: If you need to check dataset structure, you can call get_dataset_schema(dataset_id) first. "
+                "However, you MUST eventually call run_analysis with generated code. "
+                "DO NOT refuse - generate code based on the user's question and available context."
+            )
+
+        if system_parts:
+            system_content = "\n\n".join(system_parts)
+            prompt_messages.insert(0, SystemMessage(content=system_content))
+            logger.info(
+                f"Injected system context with {len(dataset_ids_found)} dataset ID(s): {sorted(dataset_ids_found)}"
+            )
+
+        prompt = CODE_GENERATION_PROMPT.invoke({"messages": prompt_messages})
+        logger.info("Invoking coding LLM for code generation...")
+        logger.info(f"Available coding tools: {[tool.name for tool in coding_tools]}")
+        logger.info(f"Tool choice setting: {coding_tool_choice}")
+        logger.info(f"Number of messages in prompt: {len(prompt.messages)}")
+        response = coding_llm_with_tools.invoke(prompt.messages)
+
+        # Validate response - check if model output natural language instead of tool calls
+        has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+        has_content = (
+            hasattr(response, "content")
+            and response.content
+            and response.content.strip()
+        )
+
+        # Detect refusal patterns in the response
+        refusal_keywords = [
+            "cannot",
+            "can't",
+            "unable",
+            "refuse",
+            "not able",
+            "don't have",
+            "need more",
+            "insufficient",
+            "lack of",
+            "missing information",
+            "not enough",
+            "requires more",
+            "cannot proceed",
+            "unable to",
+        ]
+        is_refusal = False
+        if has_content:
+            content_lower = response.content.lower()
+            is_refusal = any(keyword in content_lower for keyword in refusal_keywords)
+
+        if not has_tool_calls and has_content:
+            content_preview = (
+                response.content[:200]
+                if len(response.content) > 200
+                else response.content
+            )
+
+            if is_refusal:
+                logger.error(
+                    f"Code generation LLM REFUSED to make tool calls. "
+                    f"Refusal message: {content_preview}..."
+                )
+                logger.error(
+                    "This is likely because the model doesn't have enough context or information. "
+                    "Attempting to provide additional context and retry..."
+                )
+
+                # Try to provide more context and retry once
+                # Add a more explicit instruction with example
+                from langchain_core.messages import SystemMessage
+
+                retry_system_msg = SystemMessage(
+                    content=f"""CRITICAL: You MUST make a tool call. Even if you're uncertain, you MUST still call run_analysis with the best code you can generate.
+
+The previous response was a refusal, which is not allowed. You MUST make a tool call.
+
+If you're missing information:
+1. Use the dataset IDs that were mentioned in the conversation: {sorted(list(dataset_ids_found)) if dataset_ids_found else "none found"}
+2. Generate code based on the user's question and available context
+3. Even if the code might not be perfect, you MUST call run_analysis
+
+EXAMPLE - You MUST do this:
+Call run_analysis with:
+- code: "result_df = dfs['dataset_id'].head(10)"  # Replace with actual analysis code
+- dataset_ids: ['dataset_id']  # Use actual dataset IDs from conversation
+
+DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
+                )
+
+                # Insert the retry message before the last system message (if any) or at the beginning
+                retry_prompt_messages = list(prompt_messages)
+                # Find the last SystemMessage and insert after it, or insert at the beginning
+                insert_idx = 0
+                for i, msg in enumerate(retry_prompt_messages):
+                    if isinstance(msg, SystemMessage):
+                        insert_idx = i + 1
+                retry_prompt_messages.insert(insert_idx, retry_system_msg)
+
+                retry_prompt = CODE_GENERATION_PROMPT.invoke(
+                    {"messages": retry_prompt_messages}
+                )
+                logger.info("Retrying code generation with additional context...")
+                response = coding_llm_with_tools.invoke(retry_prompt.messages)
+
+                # Re-check after retry
+                has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+                has_content = (
+                    hasattr(response, "content")
+                    and response.content
+                    and response.content.strip()
+                )
+                if has_content:
+                    content_lower = response.content.lower()
+                    is_refusal = any(
+                        keyword in content_lower for keyword in refusal_keywords
+                    )
+
+                if not has_tool_calls and is_refusal:
+                    logger.error(
+                        "Code generation LLM still refused after retry with additional context. "
+                        "This indicates a deeper issue - the model may not have sufficient information "
+                        "or there may be a configuration problem."
+                    )
+                    # Log the full refusal message for debugging
+                    logger.error(f"Full refusal message: {response.content}")
+                    # Log available context for debugging
+                    logger.error(
+                        f"Available dataset IDs from conversation: {sorted(list(dataset_ids_found)) if dataset_ids_found else 'none'}"
+                    )
+                    logger.error(
+                        f"Number of messages in context: {len(prompt_messages)}"
+                    )
+            else:
+                logger.error(
+                    f"Code generation LLM output natural language instead of tool calls. "
+                    f"Content preview: {content_preview}..."
+                )
+                logger.error(
+                    "This indicates the model did not follow instructions to make tool calls. "
+                    "Check tool_choice setting and prompt."
+                )
+
+            # Try to extract code from the natural language response and create a tool call
+            # This handles both refusals and other natural language responses
+            import re
+
+            code_match = re.search(
+                r"```(?:python)?\s*\n(.*?)```", response.content, re.DOTALL
+            )
+            if code_match:
+                extracted_code = code_match.group(1).strip()
+                logger.warning(
+                    "Attempting to extract code from natural language response"
+                )
+                # Try to extract dataset IDs from the extracted code
+                pattern = r"dfs\[['\"]([^'\"]+)['\"]\]"
+                code_dataset_ids = set(re.findall(pattern, extracted_code))
+
+                if code_dataset_ids:
+                    # Create a synthetic tool call
+                    from langchain_core.messages.tool import ToolCall
+
+                    tool_call = ToolCall(
+                        name="run_analysis",
+                        args={
+                            "code": extracted_code,
+                            "dataset_ids": sorted(list(code_dataset_ids)),
+                        },
+                        id="extracted_from_natural_language",
+                    )
+                    response.tool_calls = [tool_call]
+                    response.content = ""  # Clear the natural language content
+                    logger.warning(
+                        f"Extracted code and created synthetic tool call with dataset_ids: {sorted(code_dataset_ids)}"
+                    )
+                else:
+                    # Fallback to dataset_ids from conversation
+                    if dataset_ids_found:
+                        from langchain_core.messages.tool import ToolCall
+
+                        tool_call = ToolCall(
+                            name="run_analysis",
+                            args={
+                                "code": extracted_code,
+                                "dataset_ids": sorted(list(dataset_ids_found)),
+                            },
+                            id="extracted_from_natural_language",
+                        )
+                        response.tool_calls = [tool_call]
+                        response.content = ""
+                        logger.warning(
+                            f"Extracted code and used dataset_ids from conversation: {sorted(dataset_ids_found)}"
+                        )
+                    else:
+                        logger.error(
+                            "Could not extract code or determine dataset_ids. "
+                            "Response will be passed through but may cause errors."
+                        )
+                        # If this was a refusal and we couldn't extract code, create a minimal tool call
+                        # to prevent the workflow from completely failing
+                        if is_refusal and dataset_ids_found:
+                            logger.warning(
+                                "Creating minimal tool call with placeholder code to prevent workflow failure. "
+                                "This is a fallback - the code may need to be fixed by the main agent."
+                            )
+                            from langchain_core.messages.tool import ToolCall
+
+                            # Create a minimal code that at least loads the dataset
+                            placeholder_code = f"# Placeholder code - model refused to generate proper code\nresult_df = dfs['{list(dataset_ids_found)[0]}'].head(1)"
+                            tool_call = ToolCall(
+                                name="run_analysis",
+                                args={
+                                    "code": placeholder_code,
+                                    "dataset_ids": sorted(list(dataset_ids_found)),
+                                },
+                                id="fallback_after_refusal",
+                            )
+                            response.tool_calls = [tool_call]
+                            response.content = ""  # Clear the refusal message
+                            logger.warning(
+                                f"Created fallback tool call with dataset_ids: {sorted(list(dataset_ids_found))}"
+                            )
+
+        # Log tool calls if any and validate/fix them
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            logger.info(
+                f"Coding LLM requested {len(response.tool_calls)} tool call(s):"
+            )
+            import re
+
+            for tool_call in response.tool_calls:
+                tool_name = getattr(tool_call, "name", "unknown")
+                logger.info(f"  - {tool_name}")
+
+                # Validate and fix run_analysis tool calls
+                if tool_name == "run_analysis":
+                    args = getattr(tool_call, "args", {})
+                    if not isinstance(args, dict):
+                        args = {}
+
+                    # Check if dataset_ids is missing
+                    if "dataset_ids" not in args or not args.get("dataset_ids"):
+                        code = args.get("code", "")
+                        if code:
+                            # Extract dataset IDs from code using regex
+                            # Look for patterns like dfs['dataset_id'] or dfs["dataset_id"]
+                            pattern = r"dfs\[['\"]([^'\"]+)['\"]\]"
+                            code_dataset_ids = set(re.findall(pattern, code))
+
+                            # Also check for code aliases (df_jpm_patients, etc.)
+                            # These are less reliable, so we'll prioritize dfs['id'] patterns
+
+                            if code_dataset_ids:
+                                args["dataset_ids"] = sorted(list(code_dataset_ids))
+                                tool_call.args = args
+                                logger.warning(
+                                    f"Fixed missing dataset_ids in run_analysis call. "
+                                    f"Extracted from code: {args['dataset_ids']}"
+                                )
+                            elif dataset_ids_found:
+                                # Fallback to dataset IDs found in conversation
+                                args["dataset_ids"] = sorted(list(dataset_ids_found))
+                                tool_call.args = args
+                                logger.warning(
+                                    f"Fixed missing dataset_ids in run_analysis call. "
+                                    f"Using dataset IDs from conversation: {args['dataset_ids']}"
+                                )
+                            else:
+                                logger.error(
+                                    "run_analysis call is missing dataset_ids and could not be extracted from code or conversation."
+                                )
+        else:
+            logger.warning(
+                "Coding LLM response has no tool calls - code generation may have failed"
+            )
+
+        logger.info("Code generation response generated")
         return {"messages": [response]}
 
     # Verifier node
@@ -1530,6 +2039,7 @@ Based on this Confluence page, {user_query}"""
     workflow.add_node("document_qa", document_qa_node)
     workflow.add_node("knowledge_enrichment", knowledge_enrichment_node)
     workflow.add_node("agent", call_model)
+    workflow.add_node("code_generation", code_generation_node)
     workflow.add_node("tools", call_tools)
     workflow.add_node("verifier", verify_response)
 
@@ -1607,14 +2117,47 @@ Based on this Confluence page, {user_query}"""
         },
     )
 
-    # Route from tools back to document_qa if we're in document QA mode
+    # Route from code_generation to tools
+    workflow.add_edge("code_generation", "tools")
+
+    # Route from tools back to appropriate node
     def route_from_tools(state: AgentState) -> str:
-        """Route from tools - check if we're in document QA mode."""
+        """Route from tools - check context and determine next step."""
         classification = state.get("query_classification", "DATA_ANALYSIS")
+
+        # If document QA mode, route back to document_qa
         if classification == "DOCUMENT_QA":
             return "document_qa"
-        else:
-            return "agent"
+
+        # Check if we need to retry code generation (e.g., if run_analysis failed)
+        messages = state["messages"]
+        last_tool_message = None
+        for msg in reversed(messages):
+            if hasattr(msg, "name") and msg.name:
+                last_tool_message = msg
+                break
+
+        # If run_analysis failed and we have error, might need to retry code generation
+        if last_tool_message and hasattr(last_tool_message, "name"):
+            if last_tool_message.name == "run_analysis":
+                # Check if there's an error in the result
+                if hasattr(last_tool_message, "content"):
+                    content = last_tool_message.content
+                    if isinstance(content, str):
+                        # Check for error indicators
+                        if (
+                            '"error"' in content.lower()
+                            or '"success": false' in content.lower()
+                        ):
+                            # Check if we should retry code generation or go back to agent
+                            # For now, route back to agent to analyze the error
+                            logger.info(
+                                "run_analysis failed, routing back to agent for error analysis"
+                            )
+                            return "agent"
+
+        # Default: route back to agent for next reasoning step
+        return "agent"
 
     workflow.add_conditional_edges(
         "tools",
@@ -1630,7 +2173,20 @@ Based on this Confluence page, {user_query}"""
 
     # Add conditional edges from agent
     def route_after_agent(state: AgentState) -> str:
-        """Route after agent - check if we need to continue, end, or verify."""
+        """Route after agent - check if we need code generation, tools, or verify."""
+        messages = state["messages"]
+        last_message = messages[-1] if messages else None
+
+        # Check if code generation is needed (marked by special message)
+        if (
+            last_message
+            and hasattr(last_message, "content")
+            and isinstance(last_message.content, str)
+            and "CODE_GENERATION_NEEDED" in last_message.content
+        ):
+            logger.info("Routing to code generation node")
+            return "code_generation"
+
         # Check if we should continue with tools
         if should_continue(state) == "continue":
             return "continue"  # Return the key, not the destination
@@ -1643,6 +2199,7 @@ Based on this Confluence page, {user_query}"""
         "agent",
         route_after_agent,
         {
+            "code_generation": "code_generation",
             "continue": "tools",
             "verifier": "verifier",
         },
