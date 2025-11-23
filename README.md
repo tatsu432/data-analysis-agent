@@ -662,8 +662,52 @@ pip install -e .
 
 Create a `.env` file with:
 ```bash
-OPENAI_API_KEY=your_openai_api_key
+# LLM Model Configuration (required)
+# Configure the LLM provider and model using CHAT_NODE prefix
+# Supported providers: openai, anthropic, local, qwen_ollama
+
+# Example: OpenAI
+CHAT_NODE__llm_model_provider=openai
+CHAT_NODE__llm_model_name=gpt-5.1
+CHAT_NODE__temperature=0.1
+CHAT_NODE__api_key=your_openai_api_key
+
+# Example: Anthropic (alternative)
+# CHAT_NODE__llm_model_provider=anthropic
+# CHAT_NODE__llm_model_name=claude-3-5-sonnet-20241022
+# CHAT_NODE__temperature=0.1
+# CHAT_NODE__api_key=your_anthropic_api_key
+
+# Example: Local LLM (Ollama or other OpenAI-compatible server)
+# CHAT_NODE__llm_model_provider=local
+# CHAT_NODE__llm_model_name=qwen2.5-coder:14b  # Model name for Ollama
+# CHAT_NODE__temperature=0.1
+# CHAT_NODE__base_url=http://localhost:11434/v1  # Ollama default endpoint
+# CHAT_NODE__api_key=  # Optional - a dummy key will be used if not provided
+#
+# Example: Qwen via Ollama (recommended for Qwen models - shows as 'qwen_ollama' in LangSmith)
+# CHAT_NODE__llm_model_provider=qwen_ollama
+# CHAT_NODE__llm_model_name=qwen2.5-coder:14b
+# CHAT_NODE__temperature=0.1
+# CHAT_NODE__base_url=http://localhost:11434/v1  # Ollama default endpoint
+# CHAT_NODE__api_key=  # Optional - a dummy key will be used if not provided
+#
+# Note: For Ollama, make sure the server is running:
+#   - Install: brew install ollama (macOS) or see https://ollama.ai
+#   - Start service: brew services start ollama
+#   - Pull model: ollama pull qwen2.5-coder:14b
+#   - Verify: curl http://localhost:11434/api/version
+#
+# Note: The API key is optional for local LLMs. If not provided, a dummy
+#       key will be used automatically (most local servers accept any key or ignore it).
+#
+# Note: Use 'qwen_ollama' provider instead of 'local' for Qwen models to get
+#       better visibility in LangSmith traces (shows as 'qwen_ollama' instead of 'ChatOpenAI').
+
+# MCP Server Configuration
 DATA_ANALYSIS_MCP_SERVER_URL=http://localhost:8082/mcp  # Default MCP server URL (must include /mcp path)
+
+# LangGraph Server Configuration
 LANGGRAPH_SERVER_URL=http://localhost:2024  # Default LangGraph Server URL (used by Streamlit)
 LANGGRAPH_ASSISTANT_ID=<your-assistant-uuid>  # Assistant ID (UUID) for LangGraph Server - find it in LangGraph Studio UI
 

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from dotenv import load_dotenv
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import BaseMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -14,6 +13,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import NotRequired, TypedDict
 
+from .llm_utils import initialize_llm
 from .mcp_tool_loader import MCPToolLoader
 from .prompts import (
     ANALYSIS_PROMPT,
@@ -56,18 +56,25 @@ class AgentState(TypedDict):
     ]  # Stores recent analysis results for Confluence export
 
 
-async def create_agent(model_name: str = "gpt-5.1", temperature: float = 0.1):
+async def create_agent():
     """
     Create the data analysis agent graph.
 
-    Args:
-        model_name: Name of the LLM model to use
-        temperature: Temperature for the LLM
+    LLM configuration is loaded from environment variables using the CHAT_NODE prefix.
+    For example:
+        CHAT_NODE__llm_model_provider=openai
+        CHAT_NODE__llm_model_name=gpt-5.1
+        CHAT_NODE__temperature=0.1
+        CHAT_NODE__api_key=sk-...
 
     Returns:
         Compiled LangGraph StateGraph
     """
-    logger.info(f"Creating agent with model: {model_name}")
+    settings = get_settings()
+    logger.info(
+        f"Creating agent with model: {settings.chat_llm.llm_model_name} "
+        f"(provider: {settings.chat_llm.llm_model_provider})"
+    )
 
     # Load MCP tools
     mcp_tool_loader = MCPToolLoader()
@@ -82,12 +89,8 @@ async def create_agent(model_name: str = "gpt-5.1", temperature: float = 0.1):
         logger.info("  - %s", tool_name)
     logger.info("=" * 60)
 
-    # Initialize the LLM
-    llm = init_chat_model(
-        model=model_name,
-        model_provider="openai",
-        temperature=temperature,
-    )
+    # Initialize the LLM from settings
+    llm = initialize_llm(settings.chat_llm)
 
     # Bind tools to the LLM
     llm_with_tools = llm.bind_tools(tools)
