@@ -22,6 +22,7 @@ from .prompts import (
     CONFLUENCE_QUERY_UNDERSTANDING_PROMPT,
     DOCUMENT_QA_PROMPT,
     KNOWLEDGE_ENRICHMENT_PROMPT,
+    VERIFIER_PROMPT,
 )
 from .settings import LLMProvider, get_settings
 
@@ -46,6 +47,7 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     retry_count: NotRequired[int]
+    verification_retry_count: NotRequired[int]  # Track verification retries
     query_classification: NotRequired[Literal["DOCUMENT_QA", "DATA_ANALYSIS", "BOTH"]]
     knowledge_context: NotRequired[str]
     doc_action: NotRequired[Literal["NONE", "FROM_ANALYSIS", "FROM_CONFLUENCE"]]
@@ -54,6 +56,7 @@ class AgentState(TypedDict):
     analysis_context: NotRequired[
         dict
     ]  # Stores recent analysis results for Confluence export
+    verification_result: NotRequired[dict]  # Stores verification result
 
 
 async def create_agent():
@@ -437,6 +440,194 @@ async def create_agent():
             logger.info("LLM response (no tool calls)")
 
         return {"messages": [response]}
+
+    # Verifier node
+    def verify_response(state: AgentState):
+        """Verify if the agent's response is sufficient to answer the user's query."""
+        logger.info("=" * 60)
+        logger.info("NODE: verify_response")
+
+        messages = state["messages"]
+        query_classification = state.get("query_classification", "DATA_ANALYSIS")
+        verification_retry_count = state.get("verification_retry_count", 0)
+
+        # Maximum retries to prevent infinite loops
+        MAX_VERIFICATION_RETRIES = 3
+        if verification_retry_count >= MAX_VERIFICATION_RETRIES:
+            logger.warning(
+                f"Maximum verification retries ({MAX_VERIFICATION_RETRIES}) reached. Accepting response."
+            )
+            return {
+                "verification_result": {
+                    "is_sufficient": True,
+                    "reason": "Maximum retries reached",
+                    "feedback": "",
+                }
+            }
+
+        # Get the original user query
+        user_query = None
+        for msg in reversed(messages):
+            if hasattr(msg, "type") and msg.type == "human":
+                user_query = msg.content if hasattr(msg, "content") else str(msg)
+                break
+
+        if not user_query:
+            # No user query found, accept the response
+            logger.warning("No user query found, accepting response")
+            return {
+                "verification_result": {
+                    "is_sufficient": True,
+                    "reason": "No user query found",
+                    "feedback": "",
+                }
+            }
+
+        # Check if run_analysis was called (for DATA_ANALYSIS queries)
+        has_run_analysis = False
+        has_tool_calls = False
+
+        for msg in reversed(messages):
+            if hasattr(msg, "type") and msg.type == "ai":
+                # Check for tool calls
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    has_tool_calls = True
+                    for tool_call in msg.tool_calls:
+                        tool_name = getattr(tool_call, "name", "")
+                        if tool_name == "run_analysis":
+                            has_run_analysis = True
+                            break
+                break
+
+        # Check for run_analysis in tool messages
+        if not has_run_analysis:
+            for msg in reversed(messages):
+                if hasattr(msg, "name") and msg.name == "run_analysis":
+                    has_run_analysis = True
+                    break
+
+        # For DATA_ANALYSIS queries, check if run_analysis was called
+        if query_classification in ["DATA_ANALYSIS", "BOTH"]:
+            if not has_run_analysis:
+                # Check if we only have list_datasets or get_dataset_schema calls
+                only_listing_tools = True
+                for msg in reversed(messages):
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            tool_name = getattr(tool_call, "name", "")
+                            if tool_name not in ["list_datasets", "get_dataset_schema"]:
+                                only_listing_tools = False
+                                break
+                        if not only_listing_tools:
+                            break
+
+                if only_listing_tools and has_tool_calls:
+                    logger.warning(
+                        "Verification failed: Only listing tools called, no run_analysis"
+                    )
+                    return {
+                        "verification_result": {
+                            "is_sufficient": False,
+                            "reason": "Only dataset listing tools were called, but no actual analysis was performed",
+                            "feedback": "You only listed datasets or examined schemas but did not execute the analysis. You MUST call run_analysis to perform the actual data analysis and answer the user's question. The workflow is not complete until you have executed run_analysis and received actual results.",
+                        },
+                        "verification_retry_count": verification_retry_count + 1,
+                    }
+
+        # Use LLM to verify the response
+        # Build context for verifier
+        from langchain_core.messages import SystemMessage
+
+        # Get recent conversation context (last few messages)
+        recent_messages = messages[-10:]  # Last 10 messages for context
+
+        # Create verification prompt
+        verification_messages = [
+            SystemMessage(
+                content=f"User's original query: {user_query}\n\nQuery classification: {query_classification}\n\nHas run_analysis been called: {has_run_analysis}\n\nReview the conversation and determine if the response adequately answers the user's question."
+            )
+        ] + recent_messages
+
+        prompt = VERIFIER_PROMPT.invoke({"messages": verification_messages})
+        response = llm_json.invoke(prompt.messages)
+        response_text = response.content.strip()
+
+        # Parse JSON response
+        try:
+            verification_data = json.loads(response_text)
+            is_sufficient = verification_data.get("is_sufficient", True)
+            reason = verification_data.get("reason", "")
+            feedback = verification_data.get("feedback", "")
+
+            logger.info(f"Verification result: is_sufficient={is_sufficient}")
+            logger.info(f"Reason: {reason}")
+            if feedback:
+                logger.info(f"Feedback: {feedback}")
+
+            # If verification failed, add feedback message to guide the agent
+            result_updates = {
+                "verification_result": {
+                    "is_sufficient": is_sufficient,
+                    "reason": reason,
+                    "feedback": feedback,
+                },
+                "verification_retry_count": (
+                    verification_retry_count + 1 if not is_sufficient else 0
+                ),
+            }
+
+            if not is_sufficient and feedback:
+                from langchain_core.messages import SystemMessage
+
+                # Check if feedback message already exists to avoid duplicates
+                has_feedback = False
+                for msg in messages:
+                    if (
+                        isinstance(msg, SystemMessage)
+                        and "VERIFICATION FEEDBACK" in msg.content
+                    ):
+                        has_feedback = True
+                        break
+
+                if not has_feedback:
+                    # Add feedback message to guide the agent
+                    feedback_msg = SystemMessage(
+                        content=f"VERIFICATION FEEDBACK: {feedback}\n\nYou must replan and continue the analysis. Do not stop until you have completed the full workflow."
+                    )
+                    # Add feedback to messages
+                    current_messages = list(messages)
+                    current_messages.insert(0, feedback_msg)
+                    result_updates["messages"] = current_messages
+
+            return result_updates
+        except (ValueError, json.JSONDecodeError, TypeError) as e:
+            logger.warning(
+                f"Failed to parse verification JSON response: {e}. Response: {response_text[:200]}"
+            )
+            # Fallback: check if run_analysis was called
+            if (
+                query_classification in ["DATA_ANALYSIS", "BOTH"]
+                and not has_run_analysis
+            ):
+                return {
+                    "verification_result": {
+                        "is_sufficient": False,
+                        "reason": "Could not parse verification response, but run_analysis was not called",
+                        "feedback": "You must call run_analysis to perform the actual data analysis. The workflow is not complete until you have executed run_analysis and received actual results.",
+                    },
+                    "verification_retry_count": verification_retry_count + 1,
+                }
+            else:
+                # Default to accepting if we can't parse
+                return {
+                    "verification_result": {
+                        "is_sufficient": True,
+                        "reason": "Could not parse verification response, defaulting to accept",
+                        "feedback": "",
+                    }
+                }
+
+        logger.info("=" * 60)
 
     # Confluence Export Subflow Nodes
     settings = get_settings()
@@ -1340,6 +1531,7 @@ Based on this Confluence page, {user_query}"""
     workflow.add_node("knowledge_enrichment", knowledge_enrichment_node)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", call_tools)
+    workflow.add_node("verifier", verify_response)
 
     # Confluence Export subflow nodes
     workflow.add_node("ensure_analysis_context", ensure_analysis_context)
@@ -1438,25 +1630,49 @@ Based on this Confluence page, {user_query}"""
 
     # Add conditional edges from agent
     def route_after_agent(state: AgentState) -> str:
-        """Route after agent - check if we need to continue, end, or export to Confluence."""
-        doc_action = state.get("doc_action", "NONE")
-
+        """Route after agent - check if we need to continue, end, or verify."""
         # Check if we should continue with tools
         if should_continue(state) == "continue":
             return "continue"  # Return the key, not the destination
 
-        # If analysis is done and user wants to export to Confluence, route to export subflow
-        if doc_action == "FROM_ANALYSIS":
-            return "ensure_analysis_context"
-
-        # Otherwise, end
-        return "end"
+        # Otherwise, route to verifier before ending or exporting
+        # The verifier will handle routing to Confluence export if needed
+        return "verifier"
 
     workflow.add_conditional_edges(
         "agent",
         route_after_agent,
         {
             "continue": "tools",
+            "verifier": "verifier",
+        },
+    )
+
+    # Verifier routing
+    def route_after_verifier(state: AgentState) -> str:
+        """Route after verifier - check if response is sufficient."""
+        verification_result = state.get("verification_result", {})
+        is_sufficient = verification_result.get("is_sufficient", True)
+        doc_action = state.get("doc_action", "NONE")
+
+        if not is_sufficient:
+            # Verification failed, route back to agent with feedback
+            # (Feedback message is already added by verifier node)
+            logger.info("Verification failed, routing back to agent with feedback")
+            return "agent"
+        else:
+            # Verification passed
+            # If analysis is done and user wants to export to Confluence, route to export subflow
+            if doc_action == "FROM_ANALYSIS":
+                return "ensure_analysis_context"
+            # Otherwise, end
+            return "end"
+
+    workflow.add_conditional_edges(
+        "verifier",
+        route_after_verifier,
+        {
+            "agent": "agent",
             "end": END,
             "ensure_analysis_context": "ensure_analysis_context",
         },

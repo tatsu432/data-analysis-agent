@@ -9,7 +9,12 @@ from .knowledge_index import (
     build_global_knowledge_index,
 )
 from .knowledge_registry import DOCUMENTS
-from .schema import DocumentMetadata
+from .schema import (
+    DocumentMetadata,
+    GetDocumentMetadataInput,
+    GetTermDefinitionInput,
+    SearchKnowledgeInput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,12 @@ def _ensure_index_built():
 
 @analysis_mcp.tool(
     name="list_documents",
-    description="List all available documents in the knowledge base (Excel dictionaries and PDF manuals).",
+    description=(
+        "List all available documents in the knowledge base. "
+        "Returns metadata for Excel dictionaries and PDF manuals including doc_id, title, kind, source_path, description, and tags. "
+        "Use this to discover what knowledge documents are available before searching or looking up terms. "
+        "The knowledge base contains domain-specific terminology, definitions, and documentation that can help understand dataset columns and domain concepts."
+    ),
 )
 def list_documents() -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -73,9 +83,15 @@ def list_documents() -> Dict[str, List[Dict[str, Any]]]:
 
 @analysis_mcp.tool(
     name="get_document_metadata",
-    description="Get metadata for a specific document by its ID.",
+    description=(
+        "Get detailed metadata for a specific document in the knowledge base. "
+        "Returns document information including doc_id, title, kind (excel_dictionary, pdf_manual, or other), "
+        "source_path, description, and tags. "
+        "Use this to get more information about a document after discovering it via list_documents(). "
+        "The metadata helps understand what type of information the document contains."
+    ),
 )
-def get_document_metadata(doc_id: str) -> DocumentMetadata:
+def get_document_metadata(payload: GetDocumentMetadataInput) -> DocumentMetadata:
     """
     Returns metadata for the specified document.
 
@@ -91,12 +107,12 @@ def get_document_metadata(doc_id: str) -> DocumentMetadata:
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: get_document_metadata")
     logger.info("=" * 60)
-    logger.info(f"INPUT - doc_id: {doc_id}")
+    logger.info(f"INPUT - doc_id: {payload.doc_id}")
 
     try:
-        meta = document_store.validate_doc_id(doc_id)
+        meta = document_store.validate_doc_id(payload.doc_id)
         result = DocumentMetadata(
-            doc_id=doc_id,
+            doc_id=payload.doc_id,
             title=meta.get("title", ""),
             kind=meta.get("kind", "other"),
             source_path=meta.get("source_path", ""),
@@ -118,12 +134,23 @@ def get_document_metadata(doc_id: str) -> DocumentMetadata:
 @analysis_mcp.tool(
     name="get_term_definition",
     description=(
-        "Get the definition of a specific term from the knowledge base. "
-        "Searches for exact matches first, then falls back to similarity search. "
-        "Returns the best matching term entry if found."
+        "Get the definition of a specific domain term from the knowledge base. "
+        "This tool is essential for understanding domain-specific terminology that appears in datasets. "
+        "Searches for exact matches first (case-insensitive), then checks synonyms, "
+        "then falls back to similarity search if no exact match is found. "
+        "Returns the best matching term entry with definition, synonyms, related_columns (dataset columns that relate to this term), "
+        "source_doc_id, page number, and extra_context. "
+        "\n\n"
+        "Use this tool when you encounter domain-specific terms like: "
+        "- 'GP' (General Practitioner), 'HP' (Hospital), 'TRx' (Total Prescriptions), 'Rx' (Prescriptions), "
+        "- 'at-risk', 'DDI' (Drug-Drug Interaction), 'MR activity', 'unmet medical needs', etc. "
+        "\n\n"
+        "The related_columns field is particularly useful as it tells you which dataset columns map to this term, "
+        "helping you write correct filtering and analysis code. "
+        "Example: If 'GP' has related_columns=['channel_type'], you know to filter with df[df['channel_type'] == 'GP']."
     ),
 )
-def get_term_definition(term: str) -> Optional[Dict[str, any]]:
+def get_term_definition(payload: GetTermDefinitionInput) -> Optional[Dict[str, Any]]:
     """
     Get the definition of a term from the knowledge base.
 
@@ -139,12 +166,12 @@ def get_term_definition(term: str) -> Optional[Dict[str, any]]:
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: get_term_definition")
     logger.info("=" * 60)
-    logger.info(f"INPUT - term: {term}")
+    logger.info(f"INPUT - term: {payload.term}")
 
     index = _ensure_index_built()
 
     # Normalize term
-    term_normalized = term.strip().lower()
+    term_normalized = payload.term.strip().lower()
 
     # First, try exact match in term entries
     for entry in index.term_entries:
@@ -162,7 +189,7 @@ def get_term_definition(term: str) -> Optional[Dict[str, any]]:
 
     # Fallback to similarity search
     logger.info("No exact match found, trying similarity search...")
-    hits = index.search(query=term, scopes=["terms"], top_k=1)
+    hits = index.search(query=payload.term, scopes=["terms"], top_k=1)
 
     if hits and hits[0].term_entry:
         entry = hits[0].term_entry
@@ -178,16 +205,29 @@ def get_term_definition(term: str) -> Optional[Dict[str, any]]:
 @analysis_mcp.tool(
     name="search_knowledge",
     description=(
-        "Search the knowledge base for terms and document chunks. "
-        "Returns relevant term definitions and document excerpts ranked by similarity. "
-        "Use this to find information about domain-specific terms, concepts, or topics."
+        "Search the knowledge base for relevant information about terms, concepts, or topics. "
+        "This is a broader search tool compared to get_term_definition - use this when you need to explore concepts "
+        "or when exact term lookup fails. "
+        "Searches both term definitions and document chunks, returning results ranked by similarity score. "
+        "\n\n"
+        "Use this tool when: "
+        "- You need to understand a concept or topic (not just a specific term) "
+        "- get_term_definition() didn't find an exact match "
+        "- You want to explore related information about a domain topic "
+        "- You need to understand how datasets are structured or what columns mean "
+        "\n\n"
+        "The search uses hybrid search (combining keyword and semantic search) for better results. "
+        "You can limit the search scope to 'terms' only, 'docs' only, or both (default). "
+        "Returns KnowledgeHit objects with kind ('term' or 'chunk'), score, and the actual content (term_entry or chunk). "
+        "\n\n"
+        "Example queries: "
+        "- 'patient data structure' "
+        "- 'MR activity metrics' "
+        "- 'COVID-19 data format' "
+        "- 'how to filter by channel type'"
     ),
 )
-def search_knowledge(
-    query: str,
-    scopes: Optional[List[str]] = None,
-    top_k: int = 5,
-) -> Dict[str, List[Dict[str, any]]]:
+def search_knowledge(payload: SearchKnowledgeInput) -> Dict[str, List[Dict[str, Any]]]:
     """
     Search the knowledge base for relevant information.
 
@@ -204,14 +244,13 @@ def search_knowledge(
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: search_knowledge")
     logger.info("=" * 60)
-    logger.info(f"INPUT - query: {query}")
-    logger.info(f"INPUT - scopes: {scopes}")
-    logger.info(f"INPUT - top_k: {top_k}")
+    logger.info(f"INPUT - query: {payload.query}")
+    logger.info(f"INPUT - scopes: {payload.scopes}")
+    logger.info(f"INPUT - top_k: {payload.top_k}")
 
-    if scopes is None:
-        scopes = ["terms", "docs"]
+    scopes = payload.scopes if payload.scopes is not None else ["terms", "docs"]
 
-    # Validate scopes
+    # Validate scopes (Pydantic should handle this, but double-check)
     valid_scopes = ["terms", "docs"]
     invalid_scopes = [s for s in scopes if s not in valid_scopes]
     if invalid_scopes:
@@ -220,7 +259,7 @@ def search_knowledge(
         )
 
     index = _ensure_index_built()
-    hits = index.search(query=query, scopes=scopes, top_k=top_k)
+    hits = index.search(query=payload.query, scopes=scopes, top_k=payload.top_k)
 
     # Convert to dictionaries
     hits_dict = [hit.model_dump() for hit in hits]
