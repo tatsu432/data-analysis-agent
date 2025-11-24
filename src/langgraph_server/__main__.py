@@ -52,11 +52,16 @@ async def interactive_mode():
     app = await create_agent()
     thread_id = "interactive-session"
 
+    # Get recursion limit based on configured model (higher for qwen/gpt-oss)
+    from src.langgraph_server.graph import get_recursion_limit
+
+    recursion_limit = get_recursion_limit()
+
     config = {
         "configurable": {
             "thread_id": thread_id,
         },
-        "recursion_limit": 50,
+        "recursion_limit": recursion_limit,
     }
 
     while True:
@@ -119,12 +124,17 @@ async def run_single_query(query: str, thread_id: str = "default-thread"):
     # Create the agent
     app = await create_agent()
 
+    # Get recursion limit based on configured model (higher for qwen/gpt-oss)
+    from src.langgraph_server.graph import get_recursion_limit
+
+    recursion_limit = get_recursion_limit()
+
     # Configure thread for memory
     config = {
         "configurable": {
             "thread_id": thread_id,
         },
-        "recursion_limit": 50,
+        "recursion_limit": recursion_limit,
     }
 
     # Create initial message
@@ -173,4 +183,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

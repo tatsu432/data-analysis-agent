@@ -37,7 +37,9 @@ st.set_page_config(
 )
 
 st.title("📊 Data Analysis Agent")
-st.markdown("Ask questions about COVID-19 data, Confluence pages, and other data sources (PDF, Excel, etc.)")
+st.markdown(
+    "Ask questions about COVID-19 data, Confluence pages, and other data sources (PDF, Excel, etc.)"
+)
 
 
 def get_or_create_assistant():
@@ -120,10 +122,27 @@ def create_run(thread_id: str, input_data: dict, assistant_id: str):
     except Exception as e:
         raise Exception(f"Error checking assistant: {e}")
 
-    # Create run
+    # Get recursion limit based on configured model (higher for qwen/gpt-oss)
+    # Import here to avoid circular imports and ensure settings are loaded
+    from src.langgraph_server.graph import get_recursion_limit
+
+    recursion_limit = get_recursion_limit()
+
+    # Create run with config including recursion_limit
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+        },
+        "recursion_limit": recursion_limit,
+    }
+
     response = requests.post(
         f"{LANGGRAPH_SERVER_URL}/threads/{thread_id}/runs",
-        json={"assistant_id": assistant_id, "input": input_data},
+        json={
+            "assistant_id": assistant_id,
+            "input": input_data,
+            "config": config,
+        },
         timeout=30,
     )
 
@@ -156,83 +175,8 @@ def stream_run_events(thread_id: str, run_id: str):
         )
 
 
-# Initialize session state
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid.uuid4())
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Check server health
-server_healthy, health_info = check_server_health()
-if not server_healthy:
-    st.error(
-        f"❌ Cannot connect to LangGraph Server at {LANGGRAPH_SERVER_URL}\n\n"
-        f"Please make sure:\n"
-        f"1. The MCP server is running: `python -m src.mcp_server`\n"
-        f"2. The LangGraph Server is running: `langgraph dev`\n"
-        f"3. The server URL is correct (current: {LANGGRAPH_SERVER_URL})"
-    )
-    if health_info:
-        st.error(f"Error: {health_info}")
-    st.stop()
-
-# Get assistant ID
-assistant_id = get_or_create_assistant()
-
-# Sidebar
-with st.sidebar:
-    st.success("✅ Connected to LangGraph Server")
-    st.caption(f"Server: {LANGGRAPH_SERVER_URL}")
-    st.caption(f"Graph: {GRAPH_NAME}")
-    st.caption(f"Assistant ID: {assistant_id}")
-
-    st.markdown("---")
-    st.header("Example Queries")
-    example_queries = [
-        "How does the number of patients vary from January to July 2022 in Tokyo?",
-        "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
-        "What characteristics does the patient count data have overall?",
-        "Can you model the Tokyo's covid case and tell me the model clearly?",
-        "Can you compare the each product's number of patients over the time for GP only?",
-        "Can you generate the line plots of the number of the patients for each product only for those at risk over the time?",
-        "Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE."
-    ]
-
-    for query in example_queries:
-        if st.button(query, key=f"example_{hash(query)}", use_container_width=True):
-            st.session_state.messages.append({"role": "user", "content": query})
-            st.rerun()
-
-    st.markdown("---")
-    if st.button("Clear Chat History"):
-        st.session_state.messages = []
-        st.rerun()
-
-
-# Display chat history
-# Simple rule: if last message is from user, don't show the previous assistant message
-for i, message in enumerate(st.session_state.messages):
-    # Skip the previous assistant message if we're waiting for a response
-    if (
-        i == len(st.session_state.messages) - 2
-        and message.get("role") == "assistant"
-        and st.session_state.messages[-1].get("role") == "user"
-    ):
-        continue
-
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "plot" in message:
-            st.image(message["plot"], caption="Analysis Plot")
-
-
-# Chat input
-if prompt := st.chat_input("Ask a question about the data..."):
-    # Add user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
+def process_query(prompt: str, assistant_id: str):
+    """Process a query through the agent and return the response."""
     # Track when this query started (for plot detection)
     query_start_time = time.time()
 
@@ -256,7 +200,7 @@ if prompt := st.chat_input("Ask a question about the data..."):
 
             if not run_id:
                 st.error(f"Failed to get run ID from response: {run_data}")
-                st.stop()
+                return None, None
 
             # Stream events
             accumulated_content = ""
@@ -344,6 +288,7 @@ if prompt := st.chat_input("Ask a question about the data..."):
         except Exception as e:
             st.error(f"Error: {e}")
             full_response = f"Error: {str(e)}"
+            plot_path = None
 
         # Display final response
         if full_response:
@@ -351,9 +296,125 @@ if prompt := st.chat_input("Ask a question about the data..."):
         else:
             response_placeholder.markdown("I'm working on your request...")
 
+        return full_response, plot_path
+
+
+# Initialize session state
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "pending_query" not in st.session_state:
+    st.session_state.pending_query = None
+
+# Check server health
+server_healthy, health_info = check_server_health()
+if not server_healthy:
+    st.error(
+        f"❌ Cannot connect to LangGraph Server at {LANGGRAPH_SERVER_URL}\n\n"
+        f"Please make sure:\n"
+        f"1. The MCP server is running: `python -m src.mcp_server`\n"
+        f"2. The LangGraph Server is running: `langgraph dev`\n"
+        f"3. The server URL is correct (current: {LANGGRAPH_SERVER_URL})"
+    )
+    if health_info:
+        st.error(f"Error: {health_info}")
+    st.stop()
+
+# Get assistant ID
+assistant_id = get_or_create_assistant()
+
+# Sidebar
+with st.sidebar:
+    st.success("✅ Connected to LangGraph Server")
+    st.caption(f"Server: {LANGGRAPH_SERVER_URL}")
+    st.caption(f"Graph: {GRAPH_NAME}")
+    st.caption(f"Assistant ID: {assistant_id}")
+
+    st.markdown("---")
+    st.header("Example Queries")
+    example_queries = [
+        "How does the number of patients vary from January to July 2022 in Tokyo?",
+        # "Generate and compare the line plots of the number of patients from January to August 2022 in Tokyo, Chiba, Saitama, Kanagawa.",
+        # "What characteristics does the patient count data have overall?",
+        # "Can you model the Tokyo's covid case and tell me the model clearly?",
+        # "Can you compare the each product's number of patients over the time for GP only?",
+        # "Can you generate the line plots of the number of the patients for each product only for those at risk over the time?",
+        # "Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE."
+        "2022年1月から2022年12月までの東京のコロナウイルス感染者数を図にして、要約して",
+        "HPのみに絞った上で、ラゲブリオ、パケロビッド、ゾコーバのそれぞれのコロナウイルス治療患者数を2022年1月から2024年12月までで図にして",
+        "MRの活動からラゲブリオの患者人数を予測する回帰モデルを作成して、予測精度についてまとめて、回帰モデルをわかりやすく説明して",
+        "韓国、カナダ、フランス、アメリカに関して、コロナウイルス治癒患者数を時系列でプロットして",
+        "世界規模の動向を知るために、韓国、カナダ、フランス、アメリカに関して、コロナウイルス治癒患者数を時系列でプロットして",
+        "患者経験調査とは何？",
+        "開発シナジー効果とは？",
+        "どのようなConfluenceのページがある？",
+        "コロナウイルスに関する今までの分析をまとめて、Confluenceのページに投稿して",
+    ]
+
+    for query in example_queries:
+        if st.button(query, key=f"example_{hash(query)}", use_container_width=True):
+            st.session_state.pending_query = query
+            st.rerun()
+
+    st.markdown("---")
+    if st.button("Clear Chat History"):
+        st.session_state.messages = []
+        st.rerun()
+
+
+# Display chat history
+# Simple rule: if last message is from user, don't show the previous assistant message
+for i, message in enumerate(st.session_state.messages):
+    # Skip the previous assistant message if we're waiting for a response
+    if (
+        i == len(st.session_state.messages) - 2
+        and message.get("role") == "assistant"
+        and st.session_state.messages[-1].get("role") == "user"
+    ):
+        continue
+
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "plot" in message:
+            st.image(message["plot"], caption="Analysis Plot")
+
+
+# Handle pending query from example button
+if st.session_state.pending_query:
+    prompt = st.session_state.pending_query
+    st.session_state.pending_query = None  # Clear the flag
+
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Process the query
+    full_response, plot_path = process_query(prompt, assistant_id)
+
     # Add assistant response to history
-    message_to_add = {"role": "assistant", "content": full_response}
-    if plot_path and plot_path.exists():
-        with open(plot_path, "rb") as f:
-            message_to_add["plot"] = BytesIO(f.read())
-    st.session_state.messages.append(message_to_add)
+    if full_response:
+        message_to_add = {"role": "assistant", "content": full_response}
+        if plot_path and plot_path.exists():
+            with open(plot_path, "rb") as f:
+                message_to_add["plot"] = BytesIO(f.read())
+        st.session_state.messages.append(message_to_add)
+
+# Chat input
+if prompt := st.chat_input("Ask a question about the data..."):
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Process the query
+    full_response, plot_path = process_query(prompt, assistant_id)
+
+    # Add assistant response to history
+    if full_response:
+        message_to_add = {"role": "assistant", "content": full_response}
+        if plot_path and plot_path.exists():
+            with open(plot_path, "rb") as f:
+                message_to_add["plot"] = BytesIO(f.read())
+        st.session_state.messages.append(message_to_add)

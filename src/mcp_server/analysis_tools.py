@@ -45,7 +45,12 @@ from sklearn import (
 
 from .dataset_store import DatasetStore
 from .datasets_registry import DATASETS
-from .schema import AnalysisResultOutput, DatasetSchemaOutput
+from .schema import (
+    AnalysisResultOutput,
+    DatasetSchemaOutput,
+    GetDatasetSchemaInput,
+    RunAnalysisInput,
+)
 from .utils import detect_and_convert_datetime_columns
 
 logger = logging.getLogger(__name__)
@@ -347,7 +352,14 @@ def _validate_plot(plot_path: Path) -> Dict[str, Any]:
 
 @analysis_mcp.tool(
     name="list_datasets",
-    description="List available datasets for analysis including their ids, descriptions, and code aliases.",
+    description=(
+        "List all available datasets for analysis. "
+        "This is an INTERMEDIATE step - use this to discover available datasets, "
+        "then you MUST continue to get_dataset_schema() and run_analysis() to complete the task. "
+        "Returns dataset IDs, descriptions, code aliases, and storage information. "
+        "Available datasets include: jpm_patient_data, jamdas_patient_data, covid_new_cases_daily, mr_activity_data. "
+        "CRITICAL: Do NOT stop after calling this tool - it only provides information, not analysis results."
+    ),
 )
 def list_datasets() -> Dict[str, Any]:
     """
@@ -409,9 +421,17 @@ def list_datasets() -> Dict[str, Any]:
 
 @analysis_mcp.tool(
     name="get_dataset_schema",
-    description="Get schema information (columns, dtypes, sample rows, row count) for a dataset.",
+    description=(
+        "Get detailed schema information for a specific dataset. "
+        "This is an INTERMEDIATE step - use this to understand dataset structure, "
+        "then you MUST continue to run_analysis() to complete the task. "
+        "Returns column names, data types, sample rows (first 5), total row count, and dataset description. "
+        "Use this to understand what columns are available, their types, and see example data before writing analysis code. "
+        "CRITICAL: Do NOT stop after calling this tool - it only provides information, not analysis results. "
+        "You must call run_analysis() to perform actual data analysis."
+    ),
 )
-def get_dataset_schema(dataset_id: str) -> DatasetSchemaOutput:
+def get_dataset_schema(payload: GetDatasetSchemaInput) -> DatasetSchemaOutput:
     """
     Returns schema information for the specified dataset.
 
@@ -427,11 +447,11 @@ def get_dataset_schema(dataset_id: str) -> DatasetSchemaOutput:
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: get_dataset_schema")
     logger.info("=" * 60)
-    logger.info(f"INPUT - dataset_id: {dataset_id}")
+    logger.info(f"INPUT - dataset_id: {payload.dataset_id}")
 
     # Use DatasetStore to get schema (handles validation and loading)
     try:
-        result = dataset_store.get_schema(dataset_id)
+        result = dataset_store.get_schema(payload.dataset_id)
 
         logger.info("OUTPUT SUMMARY:")
         logger.info(f"  - Columns: {len(result.columns)}")
@@ -447,7 +467,7 @@ def get_dataset_schema(dataset_id: str) -> DatasetSchemaOutput:
         raise
     except Exception as e:
         # Wrap other exceptions with context
-        error_msg = f"Failed to get schema for dataset '{dataset_id}': {str(e)}"
+        error_msg = f"Failed to get schema for dataset '{payload.dataset_id}': {str(e)}"
         logger.error(error_msg)
         raise RuntimeError(error_msg) from e
 
@@ -455,19 +475,47 @@ def get_dataset_schema(dataset_id: str) -> DatasetSchemaOutput:
 @analysis_mcp.tool(
     name="run_analysis",
     description=(
+        "CRITICAL: This is the PRIMARY tool for performing actual data analysis. "
+        "You MUST call this tool to complete any data analysis task. "
+        "Do NOT stop after calling list_datasets or get_dataset_schema - those are intermediate steps. "
+        "\n\n"
         "Execute Python code for data analysis on one or more datasets. "
-        "Selected datasets are available as pandas DataFrames. "
-        "Use dfs[dataset_id] to access them, or aliases like df_covid_daily "
-        "defined in the dataset registry. If primary_dataset_id is provided, "
-        "that dataset is also available as df. Assign your final result to "
-        "result_df and save plots using plt.savefig(plot_filename)."
+        "This tool executes your analysis code and returns actual results including data previews, plots, and execution status. "
+        "This is the ONLY tool that produces analysis results - all other tools (list_datasets, get_dataset_schema) are for information gathering only. "
+        "\n\n"
+        "Dataset Access: "
+        "- All datasets are available via dfs[dataset_id] dictionary. "
+        "- Each dataset also has a code_name alias (e.g., df_covid_daily, df_jpm_patients, df_mr_activity). "
+        "- If primary_dataset_id is provided, that dataset is also available as 'df'. "
+        "- If only one dataset is provided, it's automatically available as 'df'. "
+        "\n\n"
+        "Available Libraries: "
+        "- pandas (pd), numpy (np), matplotlib.pyplot (plt) "
+        "- sklearn: linear_model, metrics, model_selection, preprocessing "
+        "- statsmodels (sm): OLS, GLM, ARIMA, SARIMAX, VAR, etc. "
+        "- torch: PyTorch for deep learning "
+        "- Prophet: Facebook Prophet for time series forecasting "
+        "- pmdarima (pm): Auto ARIMA "
+        "- arch: ARCH/GARCH models for volatility "
+        "\n\n"
+        "Output Requirements: "
+        "- Assign your final result DataFrame to 'result_df' variable. "
+        "- To create plots, use plt.savefig(plot_filename) where plot_filename is provided in the execution environment. "
+        "- Date columns are AUTOMATICALLY converted to datetime - you don't need to do this manually. "
+        "\n\n"
+        "The tool returns: "
+        "- result_df_preview: First 10 rows of your result_df "
+        "- result_df_row_count: Number of rows (check if 0 - means no data matched your filters) "
+        "- plot_path: Path to saved plot file (if plot was created) "
+        "- plot_valid: Whether the plot contains actual data "
+        "- error: Any errors or warnings "
+        "- success: Whether execution succeeded "
+        "\n\n"
+        "IMPORTANT: Always check result_df_row_count - if it's 0, your filtering returned no data. "
+        "Check date formats, column names, and filter conditions."
     ),
 )
-def run_analysis(
-    code: str,
-    dataset_ids: list[str],
-    primary_dataset_id: str | None = None,
-) -> AnalysisResultOutput:
+def run_analysis(payload: RunAnalysisInput) -> AnalysisResultOutput:
     """
     Executes Python code in a controlled environment with one or more datasets loaded.
 
@@ -511,19 +559,19 @@ def run_analysis(
     logger.info("=" * 60)
     logger.info("TOOL EXECUTION: run_analysis")
     logger.info("=" * 60)
-    logger.info(f"INPUT - Code length: {len(code)} characters")
-    logger.info(f"INPUT - dataset_ids: {dataset_ids}")
-    logger.info(f"INPUT - primary_dataset_id: {primary_dataset_id}")
-    logger.debug(f"INPUT - Code content:\n{code}")
+    logger.info(f"INPUT - Code length: {len(payload.code)} characters")
+    logger.info(f"INPUT - dataset_ids: {payload.dataset_ids}")
+    logger.info(f"INPUT - primary_dataset_id: {payload.primary_dataset_id}")
+    logger.debug(f"INPUT - Code content:\n{payload.code}")
 
     # Validate dataset_ids
-    if not dataset_ids:
+    if not payload.dataset_ids:
         error_msg = "dataset_ids cannot be empty. Use list_datasets() to see available datasets."
         logger.error(error_msg)
         raise ValueError(error_msg)
 
     # Validate all dataset_ids exist
-    invalid_ids = [ds_id for ds_id in dataset_ids if ds_id not in DATASETS]
+    invalid_ids = [ds_id for ds_id in payload.dataset_ids if ds_id not in DATASETS]
     if invalid_ids:
         available_ids = ", ".join(DATASETS.keys())
         error_msg = (
@@ -535,11 +583,11 @@ def run_analysis(
         raise ValueError(error_msg)
 
     # Validate primary_dataset_id if provided
-    if primary_dataset_id is not None:
-        if primary_dataset_id not in dataset_ids:
+    if payload.primary_dataset_id is not None:
+        if payload.primary_dataset_id not in payload.dataset_ids:
             error_msg = (
-                f"primary_dataset_id '{primary_dataset_id}' must be in dataset_ids. "
-                f"Provided dataset_ids: {dataset_ids}"
+                f"primary_dataset_id '{payload.primary_dataset_id}' must be in dataset_ids. "
+                f"Provided dataset_ids: {payload.dataset_ids}"
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -561,7 +609,7 @@ def run_analysis(
 
     # Load all datasets using DatasetStore
     dfs = {}
-    for ds_id in dataset_ids:
+    for ds_id in payload.dataset_ids:
         logger.info(f"Loading dataset '{ds_id}'")
         # DatasetStore handles all storage-specific logic (local vs S3)
         df = dataset_store.load_dataframe(ds_id)
@@ -600,13 +648,15 @@ def run_analysis(
             logger.info(f"Bound dataset '{ds_id}' to variable '{code_name}'")
 
     # Choose primary dataset for `df` variable
-    if primary_dataset_id is not None:
-        exec_globals["df"] = dfs[primary_dataset_id]
-        logger.info(f"Primary dataset '{primary_dataset_id}' bound to variable 'df'")
-    elif len(dataset_ids) == 1:
+    if payload.primary_dataset_id is not None:
+        exec_globals["df"] = dfs[payload.primary_dataset_id]
+        logger.info(
+            f"Primary dataset '{payload.primary_dataset_id}' bound to variable 'df'"
+        )
+    elif len(payload.dataset_ids) == 1:
         # If only one dataset, bind it to df for convenience
-        exec_globals["df"] = dfs[dataset_ids[0]]
-        logger.info(f"Single dataset '{dataset_ids[0]}' bound to variable 'df'")
+        exec_globals["df"] = dfs[payload.dataset_ids[0]]
+        logger.info(f"Single dataset '{payload.dataset_ids[0]}' bound to variable 'df'")
 
     # Capture stdout
     stdout_capture = io.StringIO()
@@ -625,12 +675,14 @@ def run_analysis(
 
     try:
         # Preprocess code to replace deprecated matplotlib styles
-        preprocessed_code = _preprocess_code_for_deprecated_styles(code)
-        if preprocessed_code != code:
+        preprocessed_code = _preprocess_code_for_deprecated_styles(payload.code)
+        if preprocessed_code != payload.code:
             logger.info("Code was preprocessed to replace deprecated styles")
-            logger.debug(f"Original code:\n{code}")
+            logger.debug(f"Original code:\n{payload.code}")
             logger.debug(f"Preprocessed code:\n{preprocessed_code}")
-            code = preprocessed_code
+            code_to_execute = preprocessed_code
+        else:
+            code_to_execute = payload.code
 
         # Redirect stdout and stderr
         old_stdout = sys.stdout
@@ -641,7 +693,7 @@ def run_analysis(
         # Execute the code
         logger.info("Executing user code...")
         try:
-            exec(code, exec_globals)
+            exec(code_to_execute, exec_globals)
             logger.info("Code execution completed successfully")
         except OSError as e:
             # Catch matplotlib style errors and provide helpful error message
