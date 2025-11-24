@@ -148,13 +148,10 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    data_analysis_mcp_server_url: str = Field(
+    mcp_server_url: str = Field(
         default="http://localhost:8082/mcp",
-        validation_alias="DATA_ANALYSIS_MCP_SERVER_URL",
-    )
-    confluence_mcp_server_url: str | None = Field(
-        default=None,
-        validation_alias="CONFLUENCE_MCP_SERVER_URL",
+        validation_alias="MCP_SERVER_URL",
+        description="Unified MCP server URL (includes all tools: analysis, knowledge, confluence)",
     )
     confluence_space_key_analytics: str = Field(
         default="ANALYTICS",
@@ -171,6 +168,7 @@ class Settings(BaseSettings):
     # LLM settings
     chat_llm: LLMSettings = Field(alias="CHAT_NODE")
     coding_llm: OptionalLLMSettings = Field(default=None, alias="CODING_NODE")
+    verifier_llm: OptionalLLMSettings = Field(default=None, alias="VERIFIER_NODE")
 
 
 @lru_cache
@@ -236,13 +234,15 @@ def get_settings() -> Settings:
         logger.info(
             "ℹ️  No separate coding LLM configured - main LLM will be used for code generation"
         )
-    if settings.confluence_mcp_server_url:
+    if settings.verifier_llm:
         logger.info(
-            "✅ Settings loaded: CONFLUENCE_MCP_SERVER_URL=%s",
-            settings.confluence_mcp_server_url,
+            "✅ Settings loaded: Verifier LLM Model='%s' (Provider='%s', Temperature=%.2f)",
+            settings.verifier_llm.llm_model_name,
+            settings.verifier_llm.llm_model_provider,
+            settings.verifier_llm.temperature,
         )
     else:
-        logger.warning(
-            "⚠️  Settings: CONFLUENCE_MCP_SERVER_URL is None (not set in environment)"
+        logger.info(
+            "ℹ️  No separate verifier LLM configured - main LLM (with adjusted temperature) will be used for verification"
         )
     return settings

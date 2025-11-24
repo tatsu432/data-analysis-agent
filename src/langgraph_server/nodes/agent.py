@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from ..prompts import ANALYSIS_PROMPT
 from .base import BaseNode
+from .utils import is_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class AgentNode(BaseNode):
             if isinstance(msg, ToolMessage):
                 has_tool_responses = True
                 tool_name = getattr(msg, "name", "")
-                if tool_name == "run_analysis":
+                if is_tool_name(tool_name, "run_analysis"):
                     has_run_analysis = True
                     # Check if there's an error in the result
                     content = getattr(msg, "content", "")
@@ -94,7 +95,7 @@ class AgentNode(BaseNode):
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tool_call in msg.tool_calls:
                     tool_name = getattr(tool_call, "name", "")
-                    if tool_name == "run_analysis":
+                    if is_tool_name(tool_name, "run_analysis"):
                         has_run_analysis = True
 
         # If we have tool responses but no run_analysis yet, check if we should route to code generation
@@ -171,7 +172,7 @@ class AgentNode(BaseNode):
             for msg in reversed(messages):
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
-                        if getattr(tool_call, "name", "") == "run_analysis":
+                        if is_tool_name(getattr(tool_call, "name", ""), "run_analysis"):
                             args = getattr(tool_call, "args", {})
                             if isinstance(args, dict):
                                 last_code = args.get("code", "")

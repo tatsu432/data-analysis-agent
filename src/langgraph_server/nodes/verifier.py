@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from ..prompts import VERIFIER_PROMPT
 from .base import BaseNode
-from .utils import extract_content_text
+from .utils import extract_content_text, is_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class VerifierNode(BaseNode):
                     has_tool_calls = True
                     for tool_call in msg.tool_calls:
                         tool_name = getattr(tool_call, "name", "")
-                        if tool_name == "run_analysis":
+                        if is_tool_name(tool_name, "run_analysis"):
                             has_run_analysis = True
                             break
                 break
@@ -84,7 +84,7 @@ class VerifierNode(BaseNode):
         # Check for run_analysis in tool messages
         if not has_run_analysis:
             for msg in reversed(messages):
-                if hasattr(msg, "name") and msg.name == "run_analysis":
+                if hasattr(msg, "name") and is_tool_name(msg.name, "run_analysis"):
                     has_run_analysis = True
                     break
 
@@ -97,7 +97,10 @@ class VerifierNode(BaseNode):
                     if hasattr(msg, "tool_calls") and msg.tool_calls:
                         for tool_call in msg.tool_calls:
                             tool_name = getattr(tool_call, "name", "")
-                            if tool_name not in ["list_datasets", "get_dataset_schema"]:
+                            if not (
+                                is_tool_name(tool_name, "list_datasets")
+                                or is_tool_name(tool_name, "get_dataset_schema")
+                            ):
                                 only_listing_tools = False
                                 break
                         if not only_listing_tools:

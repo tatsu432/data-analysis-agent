@@ -32,6 +32,7 @@ from .nodes import (
     UnderstandConfluenceQueryNode,
     VerifierNode,
 )
+from .nodes.utils import is_tool_name
 from .settings import LLMProvider, get_settings
 
 logging.basicConfig(
@@ -105,6 +106,7 @@ async def create_agent():
     LLM configuration is loaded from environment variables:
     - CHAT_NODE prefix for the main reasoning agent
     - CODING_NODE prefix (optional) for the code generation agent
+    - VERIFIER_NODE prefix (optional) for the verifier agent
 
     For example:
         CHAT_NODE__llm_model_provider=openai
@@ -117,7 +119,13 @@ async def create_agent():
         CODING_NODE__temperature=0.1
         CODING_NODE__api_key=sk-...
 
+        VERIFIER_NODE__llm_model_provider=openai
+        VERIFIER_NODE__llm_model_name=gpt-4o
+        VERIFIER_NODE__temperature=0.0
+        VERIFIER_NODE__api_key=sk-...
+
     If CODING_NODE is not configured, the main LLM (CHAT_NODE) will be used for code generation.
+    If VERIFIER_NODE is not configured, the main LLM (CHAT_NODE) with adjusted temperature (0.0-0.2) will be used for verification.
 
     Returns:
         Compiled LangGraph StateGraph
@@ -174,6 +182,19 @@ async def create_agent():
     else:
         llm_json = llm
 
+    # Filter tools for main agent - exclude run_analysis (only available to coding agent)
+    main_agent_tools = [
+        tool for tool in tools if not is_tool_name(tool.name, "run_analysis")
+    ]
+    main_agent_tool_names = [tool.name for tool in main_agent_tools]
+    logger.info("=" * 60)
+    logger.info(
+        "Main agent tools (run_analysis excluded): %d tools", len(main_agent_tools)
+    )
+    for tool_name in main_agent_tool_names:
+        logger.info("  - %s", tool_name)
+    logger.info("=" * 60)
+
     # Bind tools to the main LLM
     # For Qwen and GPT-OSS models, use tool_choice for stable behavior
     tool_choice = None
@@ -196,9 +217,9 @@ async def create_agent():
         )
 
     if tool_choice:
-        llm_with_tools = llm.bind_tools(tools, tool_choice=tool_choice)
+        llm_with_tools = llm.bind_tools(main_agent_tools, tool_choice=tool_choice)
     else:
-        llm_with_tools = llm.bind_tools(tools)
+        llm_with_tools = llm.bind_tools(main_agent_tools)
 
     # Filter tools for code generation - only run_analysis
     # get_dataset_schema is handled by the main agent to prevent loops
@@ -286,18 +307,34 @@ async def create_agent():
                 coding_tools, tool_choice=coding_tool_choice
             )
 
+    # Initialize the verifier LLM if configured, otherwise use llm_json (low-temperature main LLM)
+    if settings.verifier_llm:
+        logger.info(
+            f"Using separate verifier LLM: {settings.verifier_llm.llm_model_name} "
+            f"(provider: {settings.verifier_llm.llm_model_provider}, "
+            f"temperature: {settings.verifier_llm.temperature})"
+        )
+        verifier_llm = initialize_llm(settings.verifier_llm)
+    else:
+        logger.info(
+            "No separate verifier LLM configured, using main LLM with adjusted temperature (0.0-0.2) for verification"
+        )
+        verifier_llm = llm_json
+
     # All old node function definitions have been moved to node classes.
     # Node instances are created below (before graph construction).
     # Create node instances
     classify_query_node = ClassifyQueryNode(llm_json)
     document_qa_node = DocumentQANode(llm_with_tools)
-    knowledge_enrichment_node = KnowledgeEnrichmentNode(llm, tools, tool_choice)
+    knowledge_enrichment_node = KnowledgeEnrichmentNode(
+        llm, main_agent_tools, tool_choice
+    )
     agent_node = AgentNode(llm_with_tools)
     code_generation_node = CodeGenerationNode(
         coding_llm_with_tools, coding_tools, coding_tool_choice
     )
     tools_node = ToolsNode(tools)
-    verifier_node = VerifierNode(llm_json)
+    verifier_node = VerifierNode(verifier_llm)
 
     # Confluence Export nodes
     ensure_analysis_context_node = EnsureAnalysisContextNode()
@@ -429,7 +466,7 @@ async def create_agent():
         # It's only available to the main agent node to prevent loops
         # If get_dataset_schema was called, it was by the main agent, so route back to agent
         if last_tool_message and hasattr(last_tool_message, "name"):
-            if last_tool_message.name == "get_dataset_schema":
+            if is_tool_name(last_tool_message.name, "get_dataset_schema"):
                 # get_dataset_schema is only called by main agent now
                 # Route back to agent to continue gathering information or route to code generation
                 logger.info(
@@ -438,7 +475,7 @@ async def create_agent():
                 return "agent"
 
             # If run_analysis succeeded, reset retry count
-            if last_tool_message.name == "run_analysis":
+            if is_tool_name(last_tool_message.name, "run_analysis"):
                 if hasattr(last_tool_message, "content"):
                     content = last_tool_message.content
                     if isinstance(content, str):
@@ -462,7 +499,7 @@ async def create_agent():
 
         # If run_analysis failed and we have error, route to agent for error analysis and retry
         if last_tool_message and hasattr(last_tool_message, "name"):
-            if last_tool_message.name == "run_analysis":
+            if is_tool_name(last_tool_message.name, "run_analysis"):
                 # Check if there's an error in the result
                 if hasattr(last_tool_message, "content"):
                     content = last_tool_message.content

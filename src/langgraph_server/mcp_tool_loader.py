@@ -21,12 +21,11 @@ settings = get_settings()
 class ServerConnections(TypedDict, total=False):
     """Type definition for server connections."""
 
-    data_analysis: StreamableHttpConnection
-    confluence: StreamableHttpConnection
+    unified: StreamableHttpConnection
 
 
 class MCPToolLoader:
-    """Class-based loader for MCP tools from multiple servers (data analysis and optionally Confluence)."""
+    """Class-based loader for MCP tools from unified server (includes analysis, knowledge, and confluence tools)."""
 
     def __init__(self, max_in_flight: int = 3) -> None:
         """Initialize the MCP tool loader."""
@@ -46,51 +45,24 @@ class MCPToolLoader:
         return headers
 
     def _build_connections(self) -> ServerConnections:
-        """Build connection dicts using ONLY supported kwargs."""
+        """Build connection dict for unified MCP server."""
         connections: ServerConnections = {}
 
-        # Always include data analysis server
-        data_analysis_conn: StreamableHttpConnection = {
+        # Unified server connection (includes all tools)
+        unified_conn: StreamableHttpConnection = {
             "transport": "streamable_http",
-            "url": settings.data_analysis_mcp_server_url,
+            "url": settings.mcp_server_url,
             "headers": self.get_default_headers(),
             "timeout": timedelta(seconds=settings.mcp_server_timeout),
             "sse_read_timeout": timedelta(seconds=settings.mcp_server_sse_read_timeout),
             "terminate_on_close": settings.mcp_server_terminate_on_close,
         }
-        connections["data_analysis"] = data_analysis_conn
+        connections["unified"] = unified_conn
         logger.info(
-            "Data analysis MCP server configured: %s",
-            settings.data_analysis_mcp_server_url,
+            "✅ Unified MCP server configured: %s (includes: analysis, knowledge, confluence tools)",
+            settings.mcp_server_url,
         )
 
-        # Conditionally include Confluence server if URL is configured
-        if settings.confluence_mcp_server_url:
-            confluence_conn: StreamableHttpConnection = {
-                "transport": "streamable_http",
-                "url": settings.confluence_mcp_server_url,
-                "headers": self.get_default_headers(),
-                "timeout": timedelta(seconds=settings.mcp_server_timeout),
-                "sse_read_timeout": timedelta(
-                    seconds=settings.mcp_server_sse_read_timeout
-                ),
-                "terminate_on_close": settings.mcp_server_terminate_on_close,
-            }
-            connections["confluence"] = confluence_conn
-            logger.info(
-                "✅ Confluence MCP server configured: %s",
-                settings.confluence_mcp_server_url,
-            )
-        else:
-            logger.warning(
-                "⚠️  Confluence MCP server not configured (CONFLUENCE_MCP_SERVER_URL not set)"
-            )
-
-        logger.info(
-            "Building connections for %d MCP server(s): %s",
-            len(connections),
-            list(connections.keys()),
-        )
         return connections
 
     async def _load_one_server(self, name: str, conn: dict) -> list[BaseTool]:
@@ -150,11 +122,11 @@ class MCPToolLoader:
                     err,
                     exc_info=True,
                 )
-                if name == "confluence":
-                    logger.warning(
-                        "⚠️  Confluence tools will not be available. "
-                        "Check that the Confluence MCP server is running at: %s",
-                        self._connections.get("confluence", {}).get("url", "unknown"),
+                # Unified server is required
+                if name == "unified":
+                    raise RuntimeError(
+                        f"Unified MCP server failed to initialize: {err}. "
+                        "Check that the MCP server is running and MCP_SERVER_URL is correct."
                     )
             else:
                 logger.info(
@@ -168,36 +140,40 @@ class MCPToolLoader:
         logger.info("📦 Total tools loaded: %d", len(results))
         logger.info("Tool names: %s", all_tool_names)
 
-        # Check for Confluence tools
+        # Check for different tool categories
+        analysis_tools = [
+            name
+            for name in all_tool_names
+            if any(x in name.lower() for x in ["dataset", "analysis", "schema"])
+        ]
+        knowledge_tools = [
+            name
+            for name in all_tool_names
+            if any(x in name.lower() for x in ["knowledge", "term", "document"])
+        ]
         confluence_tools = [
             name for name in all_tool_names if "confluence" in name.lower()
         ]
+
+        if analysis_tools:
+            logger.info("✅ Analysis tools found: %s", analysis_tools)
+        if knowledge_tools:
+            logger.info("✅ Knowledge tools found: %s", knowledge_tools)
         if confluence_tools:
             logger.info("✅ Confluence tools found: %s", confluence_tools)
         else:
-            logger.warning(
-                "⚠️  No Confluence tools found. "
-                "If you expected Confluence tools, check:"
-                " 1. CONFLUENCE_MCP_SERVER_URL is set in .env"
-                " 2. Confluence MCP server is running"
-                " 3. Server logs for connection errors"
+            logger.info(
+                "ℹ️  Confluence tools not found. "
+                "If you expected Confluence tools, ensure:"
+                " 1. CONFLUENCE_URL, CONFLUENCE_USERNAME, CONFLUENCE_API_TOKEN are set in .env"
+                " 2. Unified MCP server has Confluence tools enabled"
             )
         logger.info("=" * 60)
 
         if not results:
-            # Only raise if data_analysis server failed (required)
-            # Confluence server is optional
-            data_analysis_failed = any(
-                name == "data_analysis" and err is not None for name, _, err in batches
-            )
-            if data_analysis_failed:
-                raise RuntimeError(
-                    "Required MCP server (data_analysis) failed to initialize; see logs above."
-                )
-            # If only optional servers failed, log warning but continue
-            logger.warning(
-                "No tools loaded from any MCP server, but data_analysis server succeeded. "
-                "This may indicate a configuration issue."
+            raise RuntimeError(
+                "No tools loaded from unified MCP server. "
+                "Check that the server is running and MCP_SERVER_URL is correct."
             )
         return results
 
