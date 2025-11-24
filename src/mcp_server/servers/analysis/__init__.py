@@ -1,5 +1,5 @@
-"""Data analysis domain tools for MCP server."""
+"""Analysis domain tools for MCP server."""
 
-from .tools import analysis_mcp
+from .server import analysis_mcp
 
 __all__ = ["analysis_mcp"]

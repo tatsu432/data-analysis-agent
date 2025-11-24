@@ -9,7 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from .base import BaseNode
-from .utils import extract_content_text
+from .utils import extract_content_text, is_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class EnsureAnalysisContextNode(BaseNode):
 
         # Look backwards through messages for analysis results
         for msg in reversed(messages):
-            if hasattr(msg, "name") and msg.name == "run_analysis":
+            if hasattr(msg, "name") and is_tool_name(msg.name, "run_analysis"):
                 # Found a run_analysis tool result
                 if hasattr(msg, "content"):
                     content = msg.content
@@ -74,7 +74,7 @@ class EnsureAnalysisContextNode(BaseNode):
         for msg in reversed(messages):
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tool_call in msg.tool_calls:
-                    if getattr(tool_call, "name", "") == "run_analysis":
+                    if is_tool_name(getattr(tool_call, "name", ""), "run_analysis"):
                         args = getattr(tool_call, "args", {})
                         recent_analysis["code"] = args.get("code")
                         recent_analysis["datasets_used"] = args.get("dataset_ids", [])

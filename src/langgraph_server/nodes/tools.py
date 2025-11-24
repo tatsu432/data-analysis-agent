@@ -7,6 +7,7 @@ from langchain_core.tools import BaseTool
 from langgraph.prebuilt import ToolNode
 
 from .base import BaseNode
+from .utils import is_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,9 @@ class ToolsNode(BaseNode):
                     logger.info(f"Tool result received from: {tool_name}")
 
                     # Detect plot generation from run_analysis results
-                    if tool_name == "run_analysis" and hasattr(msg, "content"):
+                    if is_tool_name(tool_name, "run_analysis") and hasattr(
+                        msg, "content"
+                    ):
                         try:
                             content = msg.content
                             if isinstance(content, str):

@@ -23,15 +23,13 @@ warnings.filterwarnings(
 
 from fastmcp import FastMCP
 
-from .analysis_tools import analysis_mcp
-from .knowledge_tools import (  # noqa: F401 - Import to register tools
-    _ensure_index_built,
-)
-from .settings import get_settings
+from .servers.analysis.server import analysis_mcp
+from .servers.knowledge.infrastructure.knowledge_index_manager import ensure_index_built
+from .servers.knowledge.server import knowledge_mcp
 
 # Conditionally import Confluence tools if credentials are available
 try:
-    from .servers.confluence.tools import confluence_mcp
+    from .servers.confluence.server import confluence_mcp
 
     _confluence_available = True
 except (ImportError, ValueError) as e:
@@ -45,8 +43,6 @@ except (ImportError, ValueError) as e:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-settings = get_settings()
 
 # Load environment variables from project root
 project_root = Path(__file__).parent.parent.parent
@@ -64,13 +60,22 @@ async def import_all_servers() -> None:
     """Import all domain-specific MCP servers into the main server."""
     servers_imported = []
 
-    # Always import analysis and knowledge tools (they're on the same FastMCP instance)
+    # Always import analysis tools
     try:
         await main_mcp.import_server(analysis_mcp, "analysis")
         servers_imported.append("analysis")
         logger.info("✅ Successfully imported analysis tools")
     except Exception as e:
         logger.error(f"❌ Failed to import analysis tools: {e}")
+        raise
+
+    # Always import knowledge tools
+    try:
+        await main_mcp.import_server(knowledge_mcp, "knowledge")
+        servers_imported.append("knowledge")
+        logger.info("✅ Successfully imported knowledge tools")
+    except Exception as e:
+        logger.error(f"❌ Failed to import knowledge tools: {e}")
         raise
 
     # Conditionally import Confluence tools if available
@@ -107,11 +112,14 @@ async def main() -> None:
         logger.info("=" * 60)
 
         # Ensure knowledge index is built on startup
-        _ensure_index_built()
+        ensure_index_built()
 
         # Import all domain servers
         await import_all_servers()
 
+        from .settings import get_settings
+
+        settings = get_settings()
         logger.info(f"Server will run on: http://{settings.host}:{settings.port}/mcp")
         logger.info("=" * 60)
 

@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     # LLM settings
     chat_llm: LLMSettings = Field(alias="CHAT_NODE")
     coding_llm: OptionalLLMSettings = Field(default=None, alias="CODING_NODE")
+    verifier_llm: OptionalLLMSettings = Field(default=None, alias="VERIFIER_NODE")
 
 
 @lru_cache
@@ -232,5 +233,16 @@ def get_settings() -> Settings:
     else:
         logger.info(
             "ℹ️  No separate coding LLM configured - main LLM will be used for code generation"
+        )
+    if settings.verifier_llm:
+        logger.info(
+            "✅ Settings loaded: Verifier LLM Model='%s' (Provider='%s', Temperature=%.2f)",
+            settings.verifier_llm.llm_model_name,
+            settings.verifier_llm.llm_model_provider,
+            settings.verifier_llm.temperature,
+        )
+    else:
+        logger.info(
+            "ℹ️  No separate verifier LLM configured - main LLM (with adjusted temperature) will be used for verification"
         )
     return settings

@@ -10,7 +10,7 @@ from langchain_core.messages.tool import ToolCall
 
 from ..prompts import CODE_GENERATION_PROMPT
 from .base import BaseNode
-from .utils import extract_content_text
+from .utils import extract_content_text, is_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,14 @@ class CodeGenerationNode(BaseNode):
         self.coding_llm_with_tools = coding_llm_with_tools
         self.coding_tools = coding_tools
         self.coding_tool_choice = coding_tool_choice
+        self.run_analysis_tool_name = next(
+            (
+                tool.name
+                for tool in coding_tools
+                if is_tool_name(tool.name, "run_analysis")
+            ),
+            "run_analysis",
+        )
 
     def __call__(self, state: dict) -> dict:
         """Generate code for data analysis."""
@@ -51,15 +59,14 @@ class CodeGenerationNode(BaseNode):
                 tool_name = getattr(msg, "name", "")
 
                 # Extract dataset_id from get_dataset_schema responses
-                if tool_name == "get_dataset_schema":
+                if is_tool_name(tool_name, "get_dataset_schema"):
                     # Try to extract dataset_id from the tool call that preceded this response
                     # Look for the tool call in previous messages
                     for prev_msg in reversed(messages[: messages.index(msg)]):
                         if hasattr(prev_msg, "tool_calls") and prev_msg.tool_calls:
                             for tool_call in prev_msg.tool_calls:
-                                if (
-                                    getattr(tool_call, "name", "")
-                                    == "get_dataset_schema"
+                                if is_tool_name(
+                                    getattr(tool_call, "name", ""), "get_dataset_schema"
                                 ):
                                     args = getattr(tool_call, "args", {})
                                     if isinstance(args, dict):
@@ -74,7 +81,7 @@ class CodeGenerationNode(BaseNode):
                                             break
 
                 # Extract dataset IDs from list_datasets responses
-                elif tool_name == "list_datasets":
+                elif is_tool_name(tool_name, "list_datasets"):
                     try:
                         # Try to parse the tool response content
                         content = getattr(msg, "content", "")
@@ -133,7 +140,7 @@ class CodeGenerationNode(BaseNode):
         for msg in reversed(messages):
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tool_call in msg.tool_calls:
-                    if getattr(tool_call, "name", "") == "run_analysis":
+                    if is_tool_name(getattr(tool_call, "name", ""), "run_analysis"):
                         args = getattr(tool_call, "args", {})
                         if isinstance(args, dict):
                             previous_code = args.get("code", "")
@@ -395,13 +402,13 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                     "Attempting to extract code from natural language response"
                 )
                 # Try to extract dataset IDs from the extracted code
-                pattern = r"dfs\[['\"]([^'\"]+)['\"]\]"
+                pattern = r'dfs\[["\']([^"\']+)["\']\]'
                 code_dataset_ids = set(re.findall(pattern, extracted_code))
 
                 if code_dataset_ids:
                     # Create a synthetic tool call
                     tool_call = ToolCall(
-                        name="run_analysis",
+                        name=self.run_analysis_tool_name,
                         args={
                             "code": extracted_code,
                             "dataset_ids": sorted(list(code_dataset_ids)),
@@ -417,7 +424,7 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                     # Fallback to dataset_ids from conversation
                     if dataset_ids_found:
                         tool_call = ToolCall(
-                            name="run_analysis",
+                            name=self.run_analysis_tool_name,
                             args={
                                 "code": extracted_code,
                                 "dataset_ids": sorted(list(dataset_ids_found)),
@@ -443,7 +450,7 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                             # Create a minimal code that at least loads the dataset
                             placeholder_code = f"# Placeholder code - model refused to generate proper code\nresult_df = dfs['{list(dataset_ids_found)[0]}'].head(1)"
                             tool_call = ToolCall(
-                                name="run_analysis",
+                                name=self.run_analysis_tool_name,
                                 args={
                                     "code": placeholder_code,
                                     "dataset_ids": sorted(list(dataset_ids_found)),
@@ -467,43 +474,77 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                 logger.info(f"  - {tool_name}")
 
                 # Validate and fix run_analysis tool calls
-                if tool_name == "run_analysis":
+                if is_tool_name(tool_name, "run_analysis"):
                     args = getattr(tool_call, "args", {})
                     if not isinstance(args, dict):
                         args = {}
 
-                    # Remove None values from args (Pydantic rejects explicit None for optional fields)
-                    # This fixes the issue where primary_dataset_id=None causes validation errors
-                    args = {k: v for k, v in args.items() if v is not None}
-                    tool_call.args = args  # Update the tool call with filtered args
+                    # Some runtimes wrap arguments in {"payload": {...}}. Work with the inner payload if present.
+                    has_payload_wrapper = isinstance(args.get("payload"), dict)
+                    target_args = args["payload"] if has_payload_wrapper else args
+
+                    # Remove None values from the target args (Pydantic rejects explicit None for optional fields)
+                    target_args = {
+                        k: v for k, v in target_args.items() if v is not None
+                    }
+
+                    # Write cleaned args back into the correct structure
+                    if has_payload_wrapper:
+                        args["payload"] = target_args
+                        tool_call.args = args
+                    else:
+                        tool_call.args = target_args
+                        args = target_args
+
+                    working_args = (
+                        tool_call.args["payload"]
+                        if has_payload_wrapper
+                        else tool_call.args
+                    )
 
                     # Check if dataset_ids is missing
-                    if "dataset_ids" not in args or not args.get("dataset_ids"):
-                        code = args.get("code", "")
+                    if "dataset_ids" not in working_args or not working_args.get(
+                        "dataset_ids"
+                    ):
+                        code = working_args.get("code", "")
                         if code:
                             # Extract dataset IDs from code using regex
-                            pattern = r"dfs\[['\"]([^'\"]+)['\"]\]"
+                            pattern = r'dfs\[["\']([^"\']+)["\']\]'
                             code_dataset_ids = set(re.findall(pattern, code))
 
                             if code_dataset_ids:
-                                args["dataset_ids"] = sorted(list(code_dataset_ids))
-                                tool_call.args = args
+                                working_args["dataset_ids"] = sorted(
+                                    list(code_dataset_ids)
+                                )
                                 logger.warning(
                                     f"Fixed missing dataset_ids in run_analysis call. "
-                                    f"Extracted from code: {args['dataset_ids']}"
+                                    f"Extracted from code: {working_args['dataset_ids']}"
                                 )
                             elif dataset_ids_found:
                                 # Fallback to dataset IDs found in conversation
-                                args["dataset_ids"] = sorted(list(dataset_ids_found))
-                                tool_call.args = args
+                                working_args["dataset_ids"] = sorted(
+                                    list(dataset_ids_found)
+                                )
                                 logger.warning(
                                     f"Fixed missing dataset_ids in run_analysis call. "
-                                    f"Using dataset IDs from conversation: {args['dataset_ids']}"
+                                    f"Using dataset IDs from conversation: {working_args['dataset_ids']}"
                                 )
                             else:
                                 logger.error(
                                     "run_analysis call is missing dataset_ids and could not be extracted from code or conversation."
                                 )
+                        elif dataset_ids_found:
+                            working_args["dataset_ids"] = sorted(
+                                list(dataset_ids_found)
+                            )
+                            logger.warning(
+                                f"Fixed missing dataset_ids in run_analysis call. "
+                                f"No code available; using dataset IDs from conversation: {working_args['dataset_ids']}"
+                            )
+                        else:
+                            logger.error(
+                                "run_analysis call is missing dataset_ids and includes no code to inspect."
+                            )
         else:
             logger.warning(
                 "Coding LLM response has no tool calls - code generation may have failed"
