@@ -275,10 +275,3 @@ python -m src.langgraph_server.generate_diagram
 - **Clean Structure**: Prompts organized by role, nodes by function
 
 ---
-
-## Future Extensions
-
-- Additional data sources (Redshift, BigQuery)
-- Enhanced multi-dataset analysis
-- Persistent vector database for larger document collections
-- Additional statistical and ML libraries
