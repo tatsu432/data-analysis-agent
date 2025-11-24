@@ -135,7 +135,7 @@ class ConfluenceSearchNode(BaseNode):
 
         if not confluence_tool:
             error_msg = AIMessage(
-                content=f"Confluence MCP tools are not available. Please ensure CONFLUENCE_MCP_SERVER_URL is configured and the Confluence MCP server is running.\n\n"
+                content=f"Confluence MCP tools are not available. Please ensure CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN are configured in your .env file to enable Confluence tools in the unified MCP server.\n\n"
                 f"Available tools: {', '.join(available_tool_names)}"
             )
             logger.error(
@@ -387,7 +387,7 @@ class GetConfluencePageNode(BaseNode):
 
         if not confluence_tool:
             error_msg = AIMessage(
-                content=f"Confluence MCP tools are not available. Please ensure CONFLUENCE_MCP_SERVER_URL is configured and the Confluence MCP server is running.\n\n"
+                content=f"Confluence MCP tools are not available. Please ensure CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN are configured in your .env file to enable Confluence tools in the unified MCP server.\n\n"
                 f"Available tools: {', '.join(available_tool_names)}"
             )
             logger.error(

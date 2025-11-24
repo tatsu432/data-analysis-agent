@@ -17,11 +17,13 @@ An LLM-powered data analysis agent that answers analytical questions by generati
 
 ## Architecture
 
-The system consists of three main components:
+The system consists of two main components:
 
 1. **LangGraph Server** (`src/langgraph_server/`): Agent workflow with nodes for classification, reasoning, code generation, and verification
-2. **MCP Server** (`src/mcp_server/`): Exposes data analysis and knowledge tools via FastMCP
-3. **Confluence MCP Server** (`confluence_mcp_server/`): Exposes Confluence integration tools
+2. **Unified MCP Server** (`src/mcp_server/`): Exposes all tools via FastMCP:
+   - **Analysis Tools**: Data analysis, dataset operations (run_analysis, list_datasets, get_dataset_schema)
+   - **Knowledge Tools**: Knowledge base search, term definitions (search_knowledge, get_term_definition, list_documents)
+   - **Confluence Tools**: Confluence integration (search_pages, get_page, create_page, update_page)
 
 ### Agent Workflow
 
@@ -90,23 +92,24 @@ data-analysis-agent/
 │   │   ├── llm_utils.py           # LLM initialization
 │   │   └── settings.py            # Configuration
 │   │
-│   ├── mcp_server/                # Data analysis MCP server
-│   │   ├── server.py              # FastMCP server
-│   │   ├── analysis_tools.py     # run_analysis, list_datasets, etc.
-│   │   ├── knowledge_tools.py    # Knowledge base tools
+│   ├── mcp_server/                # Unified MCP server (all tools)
+│   │   ├── server.py              # Main FastMCP server (combines all domains)
+│   │   ├── analysis_tools.py      # Analysis domain tools
+│   │   ├── knowledge_tools.py    # Knowledge domain tools
+│   │   ├── servers/               # Domain-specific tool modules
+│   │   │   ├── confluence/        # Confluence domain tools
+│   │   │   │   └── tools.py
+│   │   │   └── analysis/          # Analysis domain module (future)
 │   │   ├── datasets_registry.py   # Dataset metadata
 │   │   ├── dataset_store.py      # Dataset loading (local/S3)
 │   │   ├── knowledge_registry.py  # Knowledge document metadata
 │   │   ├── document_store.py      # Document parsing
 │   │   ├── knowledge_index.py     # Vector search
-│   │   └── schema.py              # Pydantic schemas
+│   │   ├── schema.py              # Pydantic schemas
+│   │   └── settings.py            # Server configuration
 │   │
 │   └── app/
 │       └── ui.py                  # Streamlit UI
-│
-├── confluence_mcp_server/         # Confluence MCP server
-│   ├── server.py
-│   └── confluence_tools.py
 │
 └── README.md
 ```
@@ -134,24 +137,30 @@ CHAT_NODE__llm_model_name=gpt-4o
 CHAT_NODE__temperature=0.1
 CHAT_NODE__api_key=your_api_key
 
-# MCP Server
-DATA_ANALYSIS_MCP_SERVER_URL=http://localhost:8082/mcp
+# Unified MCP Server (includes all tools: analysis, knowledge, confluence)
+MCP_SERVER_URL=http://localhost:8082/mcp
 
 # LangGraph Server
 LANGGRAPH_SERVER_URL=http://localhost:2024
 LANGGRAPH_ASSISTANT_ID=<your-assistant-uuid>
 
-# Optional: Confluence
-CONFLUENCE_MCP_SERVER_URL=http://localhost:8083/mcp
+# Optional: Confluence credentials (enables Confluence tools in unified server)
+CONFLUENCE_URL=https://yourcompany.atlassian.net
+CONFLUENCE_USERNAME=your.email@company.com
+CONFLUENCE_API_TOKEN=your_api_token_here
 CONFLUENCE_SPACE_KEY_ANALYTICS=ANALYTICS
 ```
 
 ### 3. Start Servers
 
-**Terminal 1 - MCP Server:**
+**Terminal 1 - Unified MCP Server:**
 ```bash
 python -m src.mcp_server
 ```
+This starts a single unified server that includes:
+- Analysis tools (list_datasets, get_dataset_schema, run_analysis)
+- Knowledge tools (list_documents, get_term_definition, search_knowledge)
+- Confluence tools (if credentials are configured)
 
 **Terminal 2 - LangGraph Server:**
 ```bash
@@ -269,9 +278,11 @@ python -m src.langgraph_server.generate_diagram
 
 ## Architecture Notes
 
+- **Unified MCP Server**: All tools (analysis, knowledge, confluence) are exposed through a single MCP server endpoint, simplifying deployment and configuration
+- **Domain-Driven Design**: Tools are organized by domain (analysis, knowledge, confluence) under `src/mcp_server/servers/`
 - **Separation of Concerns**: MCP tools, LangGraph agent, and UI are independent
 - **Scalability**: Each component can be scaled independently
-- **Extensibility**: Easy to add new tools, nodes, or prompts
-- **Clean Structure**: Prompts organized by role, nodes by function
+- **Extensibility**: Easy to add new tool domains or tools within existing domains
+- **Clean Structure**: Prompts organized by role, nodes by function, tools by domain
 
 ---

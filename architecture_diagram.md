@@ -11,9 +11,8 @@ graph TB
     %% Core Agent Layer
     LangGraph[🤖 LangGraph Server<br/>Port: 2024<br/>src/langgraph_server/]
     
-    %% MCP Server Layer
-    MCPDataAnalysis[📊 Data Analysis MCP Server<br/>Port: 8082<br/>src/mcp_server/]
-    MCPConfluence[📝 Confluence MCP Server<br/>Port: 8083<br/>confluence_mcp_server/]
+    %% Unified MCP Server Layer
+    UnifiedMCP[📊 Unified MCP Server<br/>Port: 8082<br/>src/mcp_server/<br/>All tools: analysis, knowledge, confluence]
     
     %% External APIs
     ConfluenceAPI[🔷 Confluence API<br/>Atlassian Cloud/Server]
@@ -34,18 +33,15 @@ graph TB
     Streamlit <-->|"HTTP REST API<br/>Request ↔ Response<br/>POST /threads/{id}/runs<br/>GET /threads/{id}/runs/{run_id}/stream"| LangGraph
     
     %% LangGraph connections (bidirectional MCP protocol)
-    LangGraph <-->|"HTTP/MCP Protocol<br/>Request ↔ Response<br/>Tool Discovery & Invocation"| MCPDataAnalysis
-    LangGraph <-->|"HTTP/MCP Protocol<br/>Request ↔ Response<br/>Tool Discovery & Invocation"| MCPConfluence
+    LangGraph <-->|"HTTP/MCP Protocol<br/>Request ↔ Response<br/>Tool Discovery & Invocation<br/>All tools: analysis, knowledge, confluence"| UnifiedMCP
     LangGraph <-->|"HTTP REST API<br/>Request ↔ Response<br/>Chat Completions"| OpenAI
     
-    %% Data Analysis MCP Server connections
-    MCPDataAnalysis -->|"Read Files<br/>pandas.read_csv()"| LocalCSV
-    MCPDataAnalysis -->|"Read Files<br/>openpyxl/pandas"| LocalExcel
-    MCPDataAnalysis -->|"Read Files<br/>PyPDF2/pdfplumber"| LocalPDF
-    MCPDataAnalysis <-->|"AWS SDK<br/>boto3/s3fs<br/>Request ↔ Response<br/>Read CSV from S3"| AWSS3
-    
-    %% Confluence MCP Server connections (bidirectional REST API)
-    MCPConfluence <-->|"REST API<br/>Request ↔ Response<br/>atlassian-python-api<br/>Search, Get, Create, Update Pages"| ConfluenceAPI
+    %% Unified MCP Server connections
+    UnifiedMCP -->|"Read Files<br/>pandas.read_csv()"| LocalCSV
+    UnifiedMCP -->|"Read Files<br/>openpyxl/pandas"| LocalExcel
+    UnifiedMCP -->|"Read Files<br/>PyPDF2/pdfplumber"| LocalPDF
+    UnifiedMCP <-->|"AWS SDK<br/>boto3/s3fs<br/>Request ↔ Response<br/>Read CSV from S3"| AWSS3
+    UnifiedMCP <-->|"REST API<br/>Request ↔ Response<br/>atlassian-python-api<br/>Search, Get, Create, Update Pages"| ConfluenceAPI
     
     %% Styling
     classDef ui fill:#e1f5ff,stroke:#01579b,stroke-width:2px
@@ -57,7 +53,7 @@ graph TB
     
     class Streamlit ui
     class LangGraph agent
-    class MCPDataAnalysis,MCPConfluence mcp
+    class UnifiedMCP mcp
     class ConfluenceAPI,AWSS3 api
     class LocalCSV,LocalExcel,LocalPDF data
     class OpenAI llm
@@ -76,8 +72,7 @@ graph TB
 - **Purpose**: Main agent orchestrator
 - **Connections**:
   - Receives requests from Streamlit UI
-  - Connects to Data Analysis MCP Server (port 8082)
-  - Connects to Confluence MCP Server (port 8083)
+  - Connects to Unified MCP Server (port 8082) for all tools
   - Calls OpenAI API for LLM inference
 - **Technology**: LangGraph framework, langchain-mcp-adapters
 - **Key Features**:
@@ -86,32 +81,30 @@ graph TB
   - State management
   - Error handling and retries
 
-### Data Analysis MCP Server (Port 8082)
-- **Purpose**: Exposes data analysis tools via MCP
+### Unified MCP Server (Port 8082)
+- **Purpose**: Exposes all tools via MCP (analysis, knowledge, confluence)
 - **Connections**:
   - Reads local CSV files from `data/` directory
   - Reads local Excel files from `data/` directory
   - Reads local PDF files from `data/` directory
   - Accesses AWS S3 via boto3/s3fs for remote CSV files
-- **Tools Exposed**:
-  - `list_datasets`: List available datasets
-  - `get_dataset_schema`: Get dataset schema
-  - `run_analysis`: Execute Python code
-  - `list_documents`: List knowledge documents
-  - `get_term_definition`: Get term definitions
-  - `search_knowledge`: Search knowledge base
-- **Technology**: FastMCP, pandas, matplotlib, sklearn, etc.
-
-### Confluence MCP Server (Port 8083)
-- **Purpose**: Exposes Confluence integration tools via MCP
-- **Connections**:
   - Connects to Confluence API (Atlassian Cloud/Server)
 - **Tools Exposed**:
-  - `confluence_search_pages`: Search Confluence pages
-  - `confluence_get_page`: Get page content
-  - `confluence_create_page`: Create new pages
-  - `confluence_update_page`: Update existing pages
-- **Technology**: FastMCP, atlassian-python-api
+  - **Analysis Tools**:
+    - `list_datasets`: List available datasets
+    - `get_dataset_schema`: Get dataset schema
+    - `run_analysis`: Execute Python code
+  - **Knowledge Tools**:
+    - `list_documents`: List knowledge documents
+    - `get_term_definition`: Get term definitions
+    - `search_knowledge`: Search knowledge base
+  - **Confluence Tools** (if credentials configured):
+    - `confluence_search_pages`: Search Confluence pages
+    - `confluence_get_page`: Get page content
+    - `confluence_create_page`: Create new pages
+    - `confluence_update_page`: Update existing pages
+- **Technology**: FastMCP, pandas, matplotlib, sklearn, atlassian-python-api, etc.
+- **Architecture**: Domain-driven design with tools organized under `src/mcp_server/servers/`
 
 ### Data Sources
 - **Local CSV Files**: Stored in `data/` directory (e.g., `newly_confirmed_cases_daily.csv`)
@@ -130,7 +123,7 @@ graph TB
 1. User submits query via Streamlit UI
 2. Streamlit sends request to LangGraph Server
 3. LangGraph Server classifies query and routes to agent
-4. Agent calls Data Analysis MCP Server tools
+4. Agent calls Unified MCP Server analysis tools
 5. MCP Server reads data from CSV/Excel/PDF files or AWS S3
 6. MCP Server executes analysis code
 7. Results flow back through LangGraph Server to Streamlit UI
@@ -139,22 +132,21 @@ graph TB
 1. User requests "Create Confluence report from this analysis"
 2. LangGraph Server detects `FROM_ANALYSIS` intent
 3. Agent extracts analysis context
-4. Agent calls Confluence MCP Server `confluence_create_page` tool
-5. Confluence MCP Server calls Confluence API to create page
+4. Agent calls Unified MCP Server `confluence_create_page` tool
+5. Unified MCP Server calls Confluence API to create page
 6. Page URL returned to user via Streamlit UI
 
 ### Confluence Read Flow
 1. User asks "What pages are in Confluence?"
 2. LangGraph Server detects `FROM_CONFLUENCE` intent
-3. Agent calls Confluence MCP Server `confluence_search_pages` tool
-4. Confluence MCP Server calls Confluence API to search
+3. Agent calls Unified MCP Server `confluence_search_pages` tool
+4. Unified MCP Server calls Confluence API to search
 5. Results processed and displayed to user
 
 ## Protocol Details
 
 - **Streamlit ↔ LangGraph**: HTTP REST API (JSON)
-- **LangGraph ↔ MCP Servers**: HTTP/MCP Protocol (Model Context Protocol)
-- **MCP Servers ↔ External APIs**: REST APIs (JSON)
-- **MCP Servers ↔ Local Files**: File system I/O
+- **LangGraph ↔ Unified MCP Server**: HTTP/MCP Protocol (Model Context Protocol)
+- **Unified MCP Server ↔ External APIs**: REST APIs (JSON)
+- **Unified MCP Server ↔ Local Files**: File system I/O
 - **LangGraph ↔ OpenAI**: HTTP REST API (OpenAI Chat Completions)
-

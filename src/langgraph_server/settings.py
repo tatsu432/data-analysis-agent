@@ -148,13 +148,10 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    data_analysis_mcp_server_url: str = Field(
+    mcp_server_url: str = Field(
         default="http://localhost:8082/mcp",
-        validation_alias="DATA_ANALYSIS_MCP_SERVER_URL",
-    )
-    confluence_mcp_server_url: str | None = Field(
-        default=None,
-        validation_alias="CONFLUENCE_MCP_SERVER_URL",
+        validation_alias="MCP_SERVER_URL",
+        description="Unified MCP server URL (includes all tools: analysis, knowledge, confluence)",
     )
     confluence_space_key_analytics: str = Field(
         default="ANALYTICS",
@@ -235,14 +232,5 @@ def get_settings() -> Settings:
     else:
         logger.info(
             "ℹ️  No separate coding LLM configured - main LLM will be used for code generation"
-        )
-    if settings.confluence_mcp_server_url:
-        logger.info(
-            "✅ Settings loaded: CONFLUENCE_MCP_SERVER_URL=%s",
-            settings.confluence_mcp_server_url,
-        )
-    else:
-        logger.warning(
-            "⚠️  Settings: CONFLUENCE_MCP_SERVER_URL is None (not set in environment)"
         )
     return settings

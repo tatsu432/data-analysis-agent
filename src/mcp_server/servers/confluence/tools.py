@@ -8,8 +8,8 @@ from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
-# Create FastMCP instance
-confluence_mcp = FastMCP("Confluence MCP Server")
+# Create FastMCP instance for Confluence tools
+confluence_mcp = FastMCP("Confluence Tools")
 
 # Global Confluence client (will be initialized on first use)
 _confluence_client = None
