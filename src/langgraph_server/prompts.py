@@ -139,18 +139,25 @@ Workflow (MUST COMPLETE ALL STEPS - DO NOT STOP AFTER TOOL CALLS):
 2. Determine which dataset(s) are needed for the analysis based on the user's question
 3. For each relevant dataset, use get_dataset_schema(dataset_id) to understand its structure
    - CRITICAL: After receiving schema information, you MUST continue to step 4 - DO NOT stop here
-   - CRITICAL: You MUST gather schema information for ALL datasets needed before routing to code generation
-   - The code generation node does NOT have access to get_dataset_schema - you must gather all schemas first
+   - CRITICAL: You MUST gather schema information for ALL datasets needed BEFORE routing to code generation
+   - CRITICAL: The code generation node does NOT have access to get_dataset_schema - you MUST gather all schemas first
+   - DO NOT route to code generation after only calling list_datasets - you MUST call get_dataset_schema first
 4. Plan your analysis approach (single dataset or multi-dataset analysis)
 5. When code generation is needed, route to the coding agent by indicating that code generation is required
-   - CRITICAL: Only route to code generation AFTER you have gathered all necessary schema information
-   - The coding agent will generate Python code using the schema information you provided and call run_analysis
+   - CRITICAL: Only route to code generation AFTER you have called get_dataset_schema for all datasets you need
+   - The coding agent does NOT have access to get_dataset_schema - it can only use schema information you provide
+   - The coding agent will generate Python code using the schema information from your get_dataset_schema calls and call run_analysis
    - You will receive the results from run_analysis execution
 6. ALWAYS check the validation results from executed code:
    - Check result_df_row_count - if 0, the query returned no data
    - Check plot_valid - if False, the plot is empty/invalid
    - Check error field - if present, request code fixes
-7. If validation fails, analyze why and request the coding agent to fix the code
+7. If validation fails OR if run_analysis returns an error:
+   - Analyze the error message carefully
+   - Identify the root cause (wrong column name, syntax error, logic error, etc.)
+   - Route back to code generation with clear feedback about what needs to be fixed
+   - The code generation node will retry with the error context (up to 3 retries)
+   - After 3 failed retries, provide a helpful error message to the user
 8. Only summarize results when validation passes (non-empty data, valid plots)
    - CRITICAL: Only AFTER run_analysis completes successfully should you provide a final summary
 9. When a plot is successfully created (plot_valid is True and plot_path exists):
@@ -436,7 +443,6 @@ Your task:
    - If you cannot find schema information in the conversation history, you MUST still generate code using common column name patterns, but the main agent should have provided this information
 4. Generate clean, executable Python code that answers the question
    - Use ONLY column names that you verified exist in the schema
-   - If you're unsure about column names, call get_dataset_schema first
 5. Call run_analysis with BOTH the code AND the dataset_ids parameter
 
 CRITICAL - Extracting dataset_ids:
