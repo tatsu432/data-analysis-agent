@@ -547,11 +547,23 @@ You MUST output ONLY a valid JSON object with this structure:
   "feedback": "specific feedback for the agent if insufficient, or empty string if sufficient"
 }}
 
-Rules:
-- No natural language before or after the JSON
-- No backticks, no comments, no explanations outside the JSON
+CRITICAL OUTPUT RULES:
+- Output ONLY the JSON object, nothing else
+- Do NOT wrap the JSON in markdown code blocks (no ```json or ```)
+- Do NOT add any text before or after the JSON
+- Do NOT add comments or explanations
+- Start your response with {{ and end with }}
 - All keys must be in double quotes
+- Use true/false (lowercase) for boolean values, not True/False
 - If is_sufficient is false, provide clear feedback on what's missing
+
+CORRECT OUTPUT FORMAT:
+{{"is_sufficient": true, "reason": "The response adequately answers the question", "feedback": ""}}
+
+WRONG OUTPUT FORMATS (DO NOT DO THIS):
+- ```json{{"is_sufficient": true}}```  ❌ (no markdown blocks)
+- Here's my analysis: {{"is_sufficient": true}}  ❌ (no text before)
+- {{"is_sufficient": true}} The response is good.  ❌ (no text after)
 
 Examples:
 - User asks "Show me COVID cases in Tokyo" and agent only lists datasets → is_sufficient: false, feedback: "You only listed datasets but did not execute the analysis. You must call run_analysis to perform the actual data analysis and answer the user's question."

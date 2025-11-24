@@ -60,6 +60,34 @@ class AgentState(TypedDict):
     verification_result: NotRequired[dict]  # Stores verification result
 
 
+def extract_content_text(content):
+    """Extract text from content, handling both string and list formats.
+
+    Anthropic Claude returns content as a list like [{"type": "text", "text": "..."}]
+    while other models return a plain string.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Extract text from Anthropic's content blocks
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                # Anthropic format: {"type": "text", "text": "..."}
+                if item.get("type") == "text" and "text" in item:
+                    text_parts.append(str(item["text"]))
+                # Also handle direct string values in dict
+                elif "text" in item:
+                    text_parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                text_parts.append(item)
+        return " ".join(text_parts)
+    # Fallback: convert to string
+    return str(content)
+
+
 async def create_agent():
     """
     Create the data analysis agent graph.
@@ -176,6 +204,7 @@ async def create_agent():
     # Initialize the coding LLM if configured, otherwise use main LLM
     # CRITICAL: Force tool_choice="required" for coding LLM to ensure it always makes tool calls
     # This prevents the model from outputting natural language explanations instead of tool calls
+    # NOTE: Anthropic Claude doesn't support tool_choice="required", so we skip it for Anthropic
     if settings.coding_llm:
         logger.info(
             f"Using separate coding LLM: {settings.coding_llm.llm_model_name} "
@@ -184,29 +213,46 @@ async def create_agent():
         coding_llm = initialize_llm(settings.coding_llm)
         # Force tool_choice="required" for coding LLM to ensure tool calls are always made
         # Allow override via settings, but default to "required"
+        # EXCEPTION: Anthropic doesn't support tool_choice="required"
         coding_tool_choice = getattr(settings.coding_llm, "tool_choice", "required")
-        # For Qwen models (QWEN_OLLAMA or LOCAL with Qwen/gpt-oss), always use "required"
-        model_name_lower = settings.coding_llm.llm_model_name.lower()
-        is_qwen_model = "qwen" in model_name_lower
-        is_gpt_oss_model = (
-            "gpt-oss" in model_name_lower or "gpt_oss" in model_name_lower
-        )
-        if settings.coding_llm.llm_model_provider in (
-            LLMProvider.QWEN_OLLAMA,
-            LLMProvider.LOCAL,
-        ) and (is_qwen_model or is_gpt_oss_model):
-            coding_tool_choice = "required"
-            logger.info(
-                f"Detected {'Qwen' if is_qwen_model else 'GPT-OSS'} model: {settings.coding_llm.llm_model_name}, "
-                f"forcing tool_choice='required'"
+
+        # Anthropic doesn't support tool_choice="required" - it interprets it as a tool name
+        if settings.coding_llm.llm_model_provider == LLMProvider.ANTHROPIC:
+            coding_tool_choice = (
+                None  # Don't use tool_choice for Anthropic, rely on prompt
             )
+            logger.info(
+                "Anthropic provider detected - skipping tool_choice (Anthropic doesn't support 'required'). "
+                "Relying on prompt to ensure tool calls."
+            )
+        else:
+            # For Qwen models (QWEN_OLLAMA or LOCAL with Qwen/gpt-oss), always use "required"
+            model_name_lower = settings.coding_llm.llm_model_name.lower()
+            is_qwen_model = "qwen" in model_name_lower
+            is_gpt_oss_model = (
+                "gpt-oss" in model_name_lower or "gpt_oss" in model_name_lower
+            )
+            if settings.coding_llm.llm_model_provider in (
+                LLMProvider.QWEN_OLLAMA,
+                LLMProvider.LOCAL,
+            ) and (is_qwen_model or is_gpt_oss_model):
+                coding_tool_choice = "required"
+                logger.info(
+                    f"Detected {'Qwen' if is_qwen_model else 'GPT-OSS'} model: {settings.coding_llm.llm_model_name}, "
+                    f"forcing tool_choice='required'"
+                )
+
         logger.info(
-            f"Using tool_choice='{coding_tool_choice}' for coding LLM "
+            f"Using tool_choice={coding_tool_choice} for coding LLM "
             f"(provider: {settings.coding_llm.llm_model_provider})"
         )
-        coding_llm_with_tools = coding_llm.bind_tools(
-            coding_tools, tool_choice=coding_tool_choice
-        )
+        if coding_tool_choice is not None:
+            coding_llm_with_tools = coding_llm.bind_tools(
+                coding_tools, tool_choice=coding_tool_choice
+            )
+        else:
+            # For Anthropic, bind tools without tool_choice and rely on prompt
+            coding_llm_with_tools = coding_llm.bind_tools(coding_tools)
     else:
         logger.info(
             "No separate coding LLM configured, using main LLM for code generation"
@@ -214,13 +260,22 @@ async def create_agent():
         coding_llm = llm
         # Force tool_choice="required" for code generation even when using main LLM
         # This ensures code generation always produces tool calls
-        coding_tool_choice = "required"
-        logger.info(
-            f"Using tool_choice='{coding_tool_choice}' for code generation (using main LLM)"
-        )
-        coding_llm_with_tools = llm.bind_tools(
-            coding_tools, tool_choice=coding_tool_choice
-        )
+        # EXCEPTION: Anthropic doesn't support tool_choice="required"
+        if settings.chat_llm.llm_model_provider == LLMProvider.ANTHROPIC:
+            coding_tool_choice = None
+            logger.info(
+                "Anthropic provider detected for main LLM - skipping tool_choice for code generation. "
+                "Relying on prompt to ensure tool calls."
+            )
+            coding_llm_with_tools = llm.bind_tools(coding_tools)
+        else:
+            coding_tool_choice = "required"
+            logger.info(
+                f"Using tool_choice='{coding_tool_choice}' for code generation (using main LLM)"
+            )
+            coding_llm_with_tools = llm.bind_tools(
+                coding_tools, tool_choice=coding_tool_choice
+            )
 
     # Create classifier node
     def classify_query(state: AgentState):
@@ -244,7 +299,9 @@ async def create_agent():
             # Use LLM to classify both query type and doc_action in a single call (use low-temperature LLM for structured output)
             prompt = COMBINED_CLASSIFICATION_PROMPT.invoke({"messages": [user_message]})
             response = llm_json.invoke(prompt.messages)
-            response_text = response.content.strip()
+            response_text = extract_content_text(
+                getattr(response, "content", None)
+            ).strip()
 
             # Parse JSON response
             try:
@@ -430,7 +487,9 @@ async def create_agent():
                 enriched_response = llm.invoke(enriched_prompt.messages)
 
                 # Extract knowledge context from response
-                knowledge_context = enriched_response.content.strip()
+                knowledge_context = extract_content_text(
+                    getattr(enriched_response, "content", None)
+                ).strip()
         else:
             # No tool calls, skip enrichment
             knowledge_context = ""
@@ -725,13 +784,37 @@ async def create_agent():
         logger.info(f"Number of messages in prompt: {len(prompt.messages)}")
         response = coding_llm_with_tools.invoke(prompt.messages)
 
+        # Handle Anthropic Claude's content format (list of content blocks)
+        # Anthropic returns content as a list like [{"type": "text", "text": "..."}]
+        # while other models return a plain string
+        def extract_content_text(content):
+            """Extract text from content, handling both string and list formats."""
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                # Extract text from Anthropic's content blocks
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        # Anthropic format: {"type": "text", "text": "..."}
+                        if item.get("type") == "text" and "text" in item:
+                            text_parts.append(str(item["text"]))
+                        # Also handle direct string values in dict
+                        elif "text" in item:
+                            text_parts.append(str(item["text"]))
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                return " ".join(text_parts)
+            # Fallback: convert to string
+            return str(content)
+
+        response_content_text = extract_content_text(getattr(response, "content", None))
+
         # Validate response - check if model output natural language instead of tool calls
         has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
-        has_content = (
-            hasattr(response, "content")
-            and response.content
-            and response.content.strip()
-        )
+        has_content = response_content_text and response_content_text.strip()
 
         # Detect refusal patterns in the response
         refusal_keywords = [
@@ -752,14 +835,14 @@ async def create_agent():
         ]
         is_refusal = False
         if has_content:
-            content_lower = response.content.lower()
+            content_lower = response_content_text.lower()
             is_refusal = any(keyword in content_lower for keyword in refusal_keywords)
 
         if not has_tool_calls and has_content:
             content_preview = (
-                response.content[:200]
-                if len(response.content) > 200
-                else response.content
+                response_content_text[:200]
+                if len(response_content_text) > 200
+                else response_content_text
             )
 
             if is_refusal:
@@ -810,14 +893,14 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                 response = coding_llm_with_tools.invoke(retry_prompt.messages)
 
                 # Re-check after retry
-                has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
-                has_content = (
-                    hasattr(response, "content")
-                    and response.content
-                    and response.content.strip()
+                # Re-extract content text after retry (may be list for Anthropic)
+                response_content_text = extract_content_text(
+                    getattr(response, "content", None)
                 )
+                has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+                has_content = response_content_text and response_content_text.strip()
                 if has_content:
-                    content_lower = response.content.lower()
+                    content_lower = response_content_text.lower()
                     is_refusal = any(
                         keyword in content_lower for keyword in refusal_keywords
                     )
@@ -829,7 +912,7 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                         "or there may be a configuration problem."
                     )
                     # Log the full refusal message for debugging
-                    logger.error(f"Full refusal message: {response.content}")
+                    logger.error(f"Full refusal message: {response_content_text}")
                     # Log available context for debugging
                     logger.error(
                         f"Available dataset IDs from conversation: {sorted(list(dataset_ids_found)) if dataset_ids_found else 'none'}"
@@ -852,7 +935,7 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
             import re
 
             code_match = re.search(
-                r"```(?:python)?\s*\n(.*?)```", response.content, re.DOTALL
+                r"```(?:python)?\s*\n(.*?)```", response_content_text, re.DOTALL
             )
             if code_match:
                 extracted_code = code_match.group(1).strip()
@@ -1079,74 +1162,245 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
 
         # Use LLM to verify the response
         # Build context for verifier
-        from langchain_core.messages import SystemMessage
+        from langchain_core.messages import (
+            AIMessage,
+            HumanMessage,
+            SystemMessage,
+            ToolMessage,
+        )
 
         # Get recent conversation context (last few messages)
-        recent_messages = messages[-10:]  # Last 10 messages for context
+        # Filter out ToolMessage objects to avoid pairing issues with OpenAI/GPT models
+        # Tool messages must be immediately after AI messages with tool_calls, which is hard to guarantee
+        # Instead, we'll include tool results as text summaries in the system message
+        recent_messages_raw = messages[-10:]  # Last 10 messages for context
+        recent_messages = []
+        tool_results_summary = []
+
+        for msg in recent_messages_raw:
+            if isinstance(msg, ToolMessage):
+                # Convert tool messages to text summaries to avoid pairing issues
+                tool_name = getattr(msg, "name", "tool")
+                tool_content = extract_content_text(getattr(msg, "content", ""))
+                tool_results_summary.append(f"[{tool_name}]: {tool_content[:300]}")
+            elif (
+                isinstance(msg, AIMessage)
+                and hasattr(msg, "tool_calls")
+                and msg.tool_calls
+            ):
+                # AI message with tool_calls - convert to text to avoid needing tool messages
+                ai_content = extract_content_text(getattr(msg, "content", ""))
+                if ai_content:
+                    recent_messages.append(
+                        HumanMessage(content=f"[AI called tools]: {ai_content[:500]}")
+                    )
+                else:
+                    # No content, just tool calls - create a summary
+                    tool_names = [getattr(tc, "name", "tool") for tc in msg.tool_calls]
+                    recent_messages.append(
+                        HumanMessage(
+                            content=f"[AI called tools: {', '.join(tool_names)}]"
+                        )
+                    )
+            else:
+                # Human messages and AI messages without tool_calls - keep as-is
+                recent_messages.append(msg)
+
+        # Add tool results summary to system message if any were filtered
+        system_content = f"User's original query: {user_query}\n\nQuery classification: {query_classification}\n\nHas run_analysis been called: {has_run_analysis}\n\nReview the conversation and determine if the response adequately answers the user's question."
+        if tool_results_summary:
+            system_content += "\n\nTool Results Summary:\n" + "\n".join(
+                tool_results_summary
+            )
 
         # Create verification prompt
         verification_messages = [
-            SystemMessage(
-                content=f"User's original query: {user_query}\n\nQuery classification: {query_classification}\n\nHas run_analysis been called: {has_run_analysis}\n\nReview the conversation and determine if the response adequately answers the user's question."
-            )
+            SystemMessage(content=system_content)
         ] + recent_messages
 
         prompt = VERIFIER_PROMPT.invoke({"messages": verification_messages})
-        response = llm_json.invoke(prompt.messages)
-        response_text = response.content.strip()
+        logger.info("Invoking verifier LLM...")
 
-        # Parse JSON response
+        # Try up to 2 times to get valid JSON
+        max_parse_attempts = 2
+        verification_data = None
+        response_text = None
+
         try:
-            verification_data = json.loads(response_text)
-            is_sufficient = verification_data.get("is_sufficient", True)
-            reason = verification_data.get("reason", "")
-            feedback = verification_data.get("feedback", "")
-
-            logger.info(f"Verification result: is_sufficient={is_sufficient}")
-            logger.info(f"Reason: {reason}")
-            if feedback:
-                logger.info(f"Feedback: {feedback}")
-
-            # If verification failed, add feedback message to guide the agent
-            result_updates = {
-                "verification_result": {
-                    "is_sufficient": is_sufficient,
-                    "reason": reason,
-                    "feedback": feedback,
-                },
-                "verification_retry_count": (
-                    verification_retry_count + 1 if not is_sufficient else 0
-                ),
-            }
-
-            if not is_sufficient and feedback:
-                from langchain_core.messages import SystemMessage
-
-                # Check if feedback message already exists to avoid duplicates
-                has_feedback = False
-                for msg in messages:
-                    if (
-                        isinstance(msg, SystemMessage)
-                        and "VERIFICATION FEEDBACK" in msg.content
-                    ):
-                        has_feedback = True
-                        break
-
-                if not has_feedback:
-                    # Add feedback message to guide the agent
-                    feedback_msg = SystemMessage(
-                        content=f"VERIFICATION FEEDBACK: {feedback}\n\nYou must replan and continue the analysis. Do not stop until you have completed the full workflow."
+            for attempt in range(max_parse_attempts):
+                if attempt > 0:
+                    logger.warning(
+                        f"Retrying verifier JSON parsing (attempt {attempt + 1}/{max_parse_attempts})"
                     )
-                    # Add feedback to messages
-                    current_messages = list(messages)
-                    current_messages.insert(0, feedback_msg)
-                    result_updates["messages"] = current_messages
+                    # Add a more explicit instruction for retry
+                    retry_system_msg = SystemMessage(
+                        content="CRITICAL: You MUST output ONLY a valid JSON object. No markdown, no code blocks, no text before or after. Just the JSON object starting with { and ending with }."
+                    )
+                    retry_messages = [retry_system_msg] + verification_messages[
+                        1:
+                    ]  # Keep the original system message context
+                    retry_prompt = VERIFIER_PROMPT.invoke({"messages": retry_messages})
+                    response = llm_json.invoke(retry_prompt.messages)
+                else:
+                    response = llm_json.invoke(prompt.messages)
 
-            return result_updates
+                response_text = extract_content_text(getattr(response, "content", None))
+                if response_text:
+                    response_text = response_text.strip()
+
+                # Log the raw response for debugging (only on first attempt to avoid spam)
+                if attempt == 0:
+                    logger.info(
+                        f"Verifier raw response (first 500 chars): {response_text[:500]}"
+                    )
+
+                # Try to extract JSON from markdown code blocks if present
+                import re
+
+                json_match = re.search(
+                    r"```(?:json)?\s*\n?({.*?})\n?```", response_text, re.DOTALL
+                )
+                if json_match:
+                    response_text = json_match.group(1).strip()
+                    logger.info("Extracted JSON from markdown code block")
+
+                # Also try to extract JSON object directly if wrapped in text
+                if not json_match:
+                    # More robust pattern to find JSON object
+                    json_match = re.search(
+                        r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\"is_sufficient\"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
+                        response_text,
+                        re.DOTALL,
+                    )
+                    if json_match:
+                        response_text = json_match.group(0).strip()
+                        logger.info("Extracted JSON object from text")
+
+                # Try to find JSON object by looking for the structure
+                if not json_match:
+                    # Look for JSON object that contains is_sufficient
+                    brace_start = response_text.find("{")
+                    if brace_start >= 0:
+                        # Try to find matching closing brace
+                        brace_count = 0
+                        for i in range(brace_start, len(response_text)):
+                            if response_text[i] == "{":
+                                brace_count += 1
+                            elif response_text[i] == "}":
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    potential_json = response_text[brace_start : i + 1]
+                                    if '"is_sufficient"' in potential_json:
+                                        response_text = potential_json
+                                        logger.info(
+                                            "Extracted JSON by finding matching braces"
+                                        )
+                                        break
+
+                # Parse JSON response
+                try:
+                    verification_data = json.loads(response_text)
+                    logger.info("Successfully parsed verification JSON")
+                    break  # Success, exit retry loop
+                except (ValueError, json.JSONDecodeError, TypeError) as parse_error:
+                    if attempt < max_parse_attempts - 1:
+                        logger.warning(
+                            f"JSON parse failed on attempt {attempt + 1}: {parse_error}. Will retry..."
+                        )
+                        continue
+                    else:
+                        # Last attempt failed, will handle in except block below
+                        raise
+
+            # If we successfully parsed JSON, process it
+            if verification_data is not None:
+                is_sufficient = verification_data.get("is_sufficient", True)
+                reason = verification_data.get("reason", "")
+                feedback = verification_data.get("feedback", "")
+
+                logger.info(f"Verification result: is_sufficient={is_sufficient}")
+                logger.info(f"Reason: {reason}")
+                if feedback:
+                    logger.info(f"Feedback: {feedback}")
+
+                # If verification failed, add feedback message to guide the agent
+                result_updates = {
+                    "verification_result": {
+                        "is_sufficient": is_sufficient,
+                        "reason": reason,
+                        "feedback": feedback,
+                    },
+                    "verification_retry_count": (
+                        verification_retry_count + 1 if not is_sufficient else 0
+                    ),
+                }
+
+                if not is_sufficient and feedback:
+                    from langchain_core.messages import SystemMessage
+
+                    # Check if feedback message already exists to avoid duplicates
+                    has_feedback = False
+                    for msg in messages:
+                        if (
+                            isinstance(msg, SystemMessage)
+                            and "VERIFICATION FEEDBACK" in msg.content
+                        ):
+                            has_feedback = True
+                            break
+
+                    if not has_feedback:
+                        # Add feedback message to guide the agent
+                        feedback_msg = SystemMessage(
+                            content=f"VERIFICATION FEEDBACK: {feedback}\n\nYou must replan and continue the analysis. Do not stop until you have completed the full workflow."
+                        )
+                        # Add feedback to messages
+                        current_messages = list(messages)
+                        current_messages.insert(0, feedback_msg)
+                        result_updates["messages"] = current_messages
+
+                return result_updates
+
+            # If we get here, JSON parsing failed after all retries
+            # This should not happen due to the raise in the except block, but handle it anyway
+            raise ValueError("Failed to parse JSON after all retry attempts")
+
         except (ValueError, json.JSONDecodeError, TypeError) as e:
-            logger.warning(
-                f"Failed to parse verification JSON response: {e}. Response: {response_text[:200]}"
+            logger.error(
+                f"Failed to parse verification JSON response after all attempts: {e}"
             )
+            if response_text:
+                logger.error(f"Full response text: {response_text}")
+
+            # Try to extract meaningful information from the response even if JSON parsing fails
+            is_sufficient_heuristic = True
+            reason_heuristic = "Could not parse verification response"
+
+            # Try to infer from response text if available
+            if response_text:
+                response_lower = response_text.lower()
+                if any(
+                    word in response_lower
+                    for word in [
+                        "insufficient",
+                        "not sufficient",
+                        "missing",
+                        "incomplete",
+                        "failed",
+                    ]
+                ):
+                    is_sufficient_heuristic = False
+                    reason_heuristic = (
+                        "Verifier indicated response is insufficient (parsed from text)"
+                    )
+                elif any(
+                    word in response_lower
+                    for word in ["sufficient", "complete", "adequate", "answered"]
+                ):
+                    is_sufficient_heuristic = True
+                    reason_heuristic = (
+                        "Verifier indicated response is sufficient (parsed from text)"
+                    )
+
             # Fallback: check if run_analysis was called
             if (
                 query_classification in ["DATA_ANALYSIS", "BOTH"]
@@ -1155,20 +1409,33 @@ DO NOT refuse. DO NOT explain why you can't. Just make the tool call."""
                 return {
                     "verification_result": {
                         "is_sufficient": False,
-                        "reason": "Could not parse verification response, but run_analysis was not called",
+                        "reason": "run_analysis was not called - analysis incomplete",
                         "feedback": "You must call run_analysis to perform the actual data analysis. The workflow is not complete until you have executed run_analysis and received actual results.",
                     },
                     "verification_retry_count": verification_retry_count + 1,
                 }
             else:
-                # Default to accepting if we can't parse
-                return {
-                    "verification_result": {
-                        "is_sufficient": True,
-                        "reason": "Could not parse verification response, defaulting to accept",
-                        "feedback": "",
+                # Use heuristic if available, otherwise default based on run_analysis status
+                if has_run_analysis:
+                    return {
+                        "verification_result": {
+                            "is_sufficient": is_sufficient_heuristic,
+                            "reason": f"{reason_heuristic}. run_analysis was called, so assuming response may be sufficient.",
+                            "feedback": ""
+                            if is_sufficient_heuristic
+                            else "Please verify the response addresses the user's question completely.",
+                        }
                     }
-                }
+                else:
+                    return {
+                        "verification_result": {
+                            "is_sufficient": is_sufficient_heuristic,
+                            "reason": f"{reason_heuristic}. Unable to verify due to parsing error.",
+                            "feedback": ""
+                            if is_sufficient_heuristic
+                            else "Please verify the response addresses the user's question completely.",
+                        }
+                    }
 
         logger.info("=" * 60)
 
@@ -1335,7 +1602,7 @@ Generate the full Confluence page content in markdown format."""
         ]
 
         response = llm.invoke(prompt_messages)
-        page_content = response.content
+        page_content = extract_content_text(getattr(response, "content", None))
 
         # Extract title (first line or generate from question)
         lines = page_content.split("\n")
@@ -1579,7 +1846,7 @@ Generate the full Confluence page content in markdown format."""
             {"messages": [HumanMessage(content=user_query)]}
         )
         response = llm_json.invoke(prompt.messages)
-        response_text = response.content.strip()
+        response_text = extract_content_text(getattr(response, "content", None)).strip()
 
         # Parse JSON response
         try:
@@ -2022,8 +2289,9 @@ Based on this Confluence page, {user_query}"""
         # Format response with page reference
         from langchain_core.messages import AIMessage
 
+        response_content = extract_content_text(getattr(response, "content", None))
         formatted_response = (
-            f"{response.content}\n\n*Source: [{page_title}]({page_url})*"
+            f"{response_content}\n\n*Source: [{page_title}]({page_url})*"
         )
         answer_msg = AIMessage(content=formatted_response)
 
