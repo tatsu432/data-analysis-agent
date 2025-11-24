@@ -190,10 +190,9 @@ async def create_agent():
     else:
         llm_with_tools = llm.bind_tools(tools)
 
-    # Filter tools for code generation - only get_dataset_schema and run_analysis
-    coding_tools = [
-        tool for tool in tools if tool.name in ["get_dataset_schema", "run_analysis"]
-    ]
+    # Filter tools for code generation - only run_analysis
+    # get_dataset_schema is handled by the main agent to prevent loops
+    coding_tools = [tool for tool in tools if tool.name in ["run_analysis"]]
     coding_tool_names = [tool.name for tool in coding_tools]
     logger.info("=" * 60)
     logger.info("Code generation tools (limited set): %d tools", len(coding_tools))
@@ -622,6 +621,7 @@ async def create_agent():
 
         dataset_ids_found = set()
         schemas_found = {}  # Track which datasets have schema information
+        schema_call_count = {}  # Track how many times get_dataset_schema was called per dataset
 
         # Look through messages for tool responses that contain dataset information
         for msg in messages:
@@ -649,6 +649,10 @@ async def create_agent():
                                             dataset_ids_found.add(dataset_id)
                                             # Mark that we have schema for this dataset
                                             schemas_found[dataset_id] = True
+                                            # Track how many times this dataset's schema was called
+                                            schema_call_count[dataset_id] = (
+                                                schema_call_count.get(dataset_id, 0) + 1
+                                            )
                                             break
 
                 # Extract dataset IDs from list_datasets responses
@@ -755,19 +759,28 @@ async def create_agent():
 
             if datasets_without_schema:
                 system_parts.append(
-                    "\nWORKFLOW: First call get_dataset_schema for datasets without schema, then generate code, then call run_analysis."
+                    f"\n⚠️ WARNING: The main agent has not yet retrieved schema for these datasets: {', '.join(datasets_without_schema)}\n"
+                    f"However, you MUST still generate code and call run_analysis. Use common column name patterns or check the conversation history for any schema hints.\n"
+                    f"The main agent should have gathered this information, but proceed with code generation anyway."
                 )
             else:
                 system_parts.append(
-                    "\nYOU HAVE ENOUGH INFORMATION TO GENERATE CODE. DO NOT REFUSE. JUST MAKE THE TOOL CALL."
+                    "\n✅ YOU HAVE ALL SCHEMA INFORMATION. Generate code using the schema information from the conversation history and call run_analysis immediately."
+                )
+
+            # Add explicit instruction about using schema from conversation
+            if datasets_with_schema:
+                system_parts.append(
+                    f"\n✅ Schema information is available in the conversation history for: {', '.join(datasets_with_schema)}\n"
+                    f"Use the schema information from get_dataset_schema() responses in the conversation to generate correct code.\n"
+                    f"Then call run_analysis with your generated code."
                 )
         else:
             # Even if no dataset IDs found, we should still try to generate code
-            # The model can call get_dataset_schema if needed
             system_parts.append(
-                "NOTE: If you need to check dataset structure, you can call get_dataset_schema(dataset_id) first. "
-                "However, you MUST eventually call run_analysis with generated code. "
-                "DO NOT refuse - generate code based on the user's question and available context."
+                "NOTE: Generate code based on the user's question and available context from the conversation history.\n"
+                "The main agent has gathered all necessary information. You MUST call run_analysis with your generated code.\n"
+                "DO NOT refuse - generate code and execute it."
             )
 
         if system_parts:
@@ -2476,52 +2489,24 @@ Based on this Confluence page, {user_query}"""
         # Check recent tool calls to understand context
         messages = state["messages"]
         last_tool_message = None
-        last_ai_message = None
 
-        # Find the last tool message and the last AI message with tool calls
+        # Find the last tool message
         for msg in reversed(messages):
             if hasattr(msg, "name") and msg.name:
                 last_tool_message = msg
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                last_ai_message = msg
                 break
 
-        # Check if code generation node called get_dataset_schema
-        # If so, route back to code_generation so it can call run_analysis
+        # Note: get_dataset_schema is no longer available to code_generation node
+        # It's only available to the main agent node to prevent loops
+        # If get_dataset_schema was called, it was by the main agent, so route back to agent
         if last_tool_message and hasattr(last_tool_message, "name"):
             if last_tool_message.name == "get_dataset_schema":
-                # Check if this was called from code_generation context
-                # Look for CODE_GENERATION_NEEDED message or check if we're in code generation flow
-                for msg in reversed(messages):
-                    if (
-                        hasattr(msg, "content")
-                        and isinstance(msg.content, str)
-                        and "CODE_GENERATION_NEEDED" in msg.content
-                    ):
-                        logger.info(
-                            "get_dataset_schema called from code generation context, routing back to code_generation"
-                        )
-                        return "code_generation"
-                # Also check if the last AI message before tools was from code generation
-                # (code generation always calls tools, so if we just executed tools and only got schema, likely code gen)
-                if last_ai_message:
-                    # Check if run_analysis was NOT called yet
-                    has_run_analysis = False
-                    for msg in messages:
-                        if hasattr(msg, "name") and msg.name == "run_analysis":
-                            has_run_analysis = True
-                            break
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                if getattr(tc, "name", "") == "run_analysis":
-                                    has_run_analysis = True
-                                    break
-
-                    if not has_run_analysis:
-                        logger.info(
-                            "get_dataset_schema called but run_analysis not yet called, routing to code_generation"
-                        )
-                        return "code_generation"
+                # get_dataset_schema is only called by main agent now
+                # Route back to agent to continue gathering information or route to code generation
+                logger.info(
+                    "get_dataset_schema called by main agent, routing back to agent"
+                )
+                return "agent"
 
         # If run_analysis failed and we have error, might need to retry code generation
         if last_tool_message and hasattr(last_tool_message, "name"):
@@ -2694,6 +2679,42 @@ async def graph():
         _graph_cache = await create_agent()
 
     return _graph_cache
+
+
+def get_recursion_limit() -> int:
+    """Get the appropriate recursion limit based on the configured model.
+
+    All models use the same recursion limit (50).
+
+    Returns:
+        int: The recursion limit to use (50 for all models)
+    """
+    from .settings import LLMProvider, get_settings
+
+    settings = get_settings()
+    chat_model_name_lower = settings.chat_llm.llm_model_name.lower()
+
+    # Check if using qwen or gpt-oss models
+    is_qwen = "qwen" in chat_model_name_lower
+    is_gpt_oss = (
+        "gpt-oss" in chat_model_name_lower or "gpt_oss" in chat_model_name_lower
+    )
+
+    # Check provider
+    is_qwen_provider = settings.chat_llm.llm_model_provider == LLMProvider.QWEN_OLLAMA
+    is_local_with_qwen_or_gpt_oss = (
+        settings.chat_llm.llm_model_provider == LLMProvider.LOCAL
+        and (is_qwen or is_gpt_oss)
+    )
+
+    if is_qwen_provider or is_local_with_qwen_or_gpt_oss:
+        logger.info(
+            f"Using recursion_limit (50) for {'Qwen' if is_qwen else 'GPT-OSS'} model"
+        )
+        return 50
+
+    # Default recursion limit for other models
+    return 50
 
 
 def should_continue(state: AgentState) -> Literal["continue", "end"]:

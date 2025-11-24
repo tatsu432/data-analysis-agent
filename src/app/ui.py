@@ -122,10 +122,27 @@ def create_run(thread_id: str, input_data: dict, assistant_id: str):
     except Exception as e:
         raise Exception(f"Error checking assistant: {e}")
 
-    # Create run
+    # Get recursion limit based on configured model (higher for qwen/gpt-oss)
+    # Import here to avoid circular imports and ensure settings are loaded
+    from src.langgraph_server.graph import get_recursion_limit
+
+    recursion_limit = get_recursion_limit()
+
+    # Create run with config including recursion_limit
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+        },
+        "recursion_limit": recursion_limit,
+    }
+
     response = requests.post(
         f"{LANGGRAPH_SERVER_URL}/threads/{thread_id}/runs",
-        json={"assistant_id": assistant_id, "input": input_data},
+        json={
+            "assistant_id": assistant_id,
+            "input": input_data,
+            "config": config,
+        },
         timeout=30,
     )
 

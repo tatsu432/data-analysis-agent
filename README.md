@@ -716,6 +716,9 @@ CHAT_NODE__api_key=your_openai_api_key
 #
 # Note: Use 'qwen_ollama' provider instead of 'local' for Qwen models to get
 #       better visibility in LangSmith traces (shows as 'qwen_ollama' instead of 'ChatOpenAI').
+#
+# Important: Qwen and GPT-OSS models automatically use a higher recursion_limit (100)
+# to prevent GraphRecursionError. Other models use the default limit (50).
 
 # MCP Server Configuration
 DATA_ANALYSIS_MCP_SERVER_URL=http://localhost:8082/mcp  # Default MCP server URL (must include /mcp path)
