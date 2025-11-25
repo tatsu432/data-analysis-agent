@@ -32,6 +32,37 @@ def conversation_id_to_uuid(conversation_id: str) -> str:
     return str(uuid.uuid5(CONVERSATION_NAMESPACE, conversation_id))
 
 
+def extract_content_text(content):
+    """Extract text from content, handling both string and list formats.
+
+    Args:
+        content: Can be a string, list of strings, or list of dicts with 'text' key
+
+    Returns:
+        str: Extracted text content
+    """
+    if not content:
+        return ""
+
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        # Handle list of strings or list of dicts
+        text_parts = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+            elif isinstance(item, dict):
+                # Try common keys for text content
+                text = item.get("text") or item.get("content") or str(item)
+                if text:
+                    text_parts.append(str(text))
+        return " ".join(text_parts)
+    else:
+        # Fallback: convert to string
+        return str(content)
+
+
 class LangGraphClient:
     """Client for interacting with the LangGraph server."""
 
@@ -175,7 +206,10 @@ class LangGraphClient:
                                         # Extract AI message content
                                         for msg in event_data["messages"]:
                                             if msg.get("type") == "ai":
-                                                content = msg.get("content", "")
+                                                raw_content = msg.get("content", "")
+                                                content = extract_content_text(
+                                                    raw_content
+                                                )
                                                 if content and content.strip():
                                                     accumulated_content = content
 
