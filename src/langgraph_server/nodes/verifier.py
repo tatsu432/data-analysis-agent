@@ -5,7 +5,7 @@ import logging
 import re
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from ..prompts import VERIFIER_PROMPT
 from .base import BaseNode
@@ -32,8 +32,33 @@ class VerifierNode(BaseNode):
         """Verify the response."""
         self.log_node_start()
         messages = state["messages"]
+        intent = state.get("intent", "ANALYSIS")
         query_classification = state.get("query_classification", "DATA_ANALYSIS")
         verification_retry_count = state.get("verification_retry_count", 0)
+
+        # If router selected KNOWLEDGE, CONFLUENCE, or OTHER, don't apply DATA_ANALYSIS rules
+        # Only apply DATA_ANALYSIS verification rules when intent is ANALYSIS
+        if intent != "ANALYSIS":
+            # Override query_classification for non-ANALYSIS intents
+            if intent == "KNOWLEDGE":
+                query_classification = "DOCUMENT_QA"
+                logger.info(
+                    "Router intent is KNOWLEDGE - overriding query_classification to DOCUMENT_QA (run_analysis not required)"
+                )
+            elif intent == "CONFLUENCE":
+                query_classification = "DOCUMENT_QA"
+                logger.info(
+                    "Router intent is CONFLUENCE - overriding query_classification to DOCUMENT_QA (run_analysis not required)"
+                )
+            else:  # OTHER
+                query_classification = "DOCUMENT_QA"
+                logger.info(
+                    "Router intent is OTHER - overriding query_classification to DOCUMENT_QA (run_analysis not required)"
+                )
+        else:
+            logger.info(
+                f"Router intent is ANALYSIS - using query_classification: {query_classification}"
+            )
 
         if verification_retry_count >= MAX_VERIFICATION_RETRIES:
             logger.warning(
@@ -136,26 +161,24 @@ class VerifierNode(BaseNode):
                 and hasattr(msg, "tool_calls")
                 and msg.tool_calls
             ):
-                # AI message with tool_calls - convert to text to avoid needing tool messages
+                # AI message with tool_calls - convert to text summary but preserve AI role
                 ai_content = extract_content_text(getattr(msg, "content", ""))
                 if ai_content:
                     recent_messages.append(
-                        HumanMessage(content=f"[AI called tools]: {ai_content[:500]}")
+                        AIMessage(content=f"[AI called tools]: {ai_content[:500]}")
                     )
                 else:
                     # No content, just tool calls - create a summary
                     tool_names = [getattr(tc, "name", "tool") for tc in msg.tool_calls]
                     recent_messages.append(
-                        HumanMessage(
-                            content=f"[AI called tools: {', '.join(tool_names)}]"
-                        )
+                        AIMessage(content=f"[AI called tools: {', '.join(tool_names)}]")
                     )
             else:
                 # Human messages and AI messages without tool_calls - keep as-is
                 recent_messages.append(msg)
 
         # Add tool results summary to system message if any were filtered
-        system_content = f"User's original query: {user_query}\n\nQuery classification: {query_classification}\n\nHas run_analysis been called: {has_run_analysis}\n\nReview the conversation and determine if the response adequately answers the user's question."
+        system_content = f"User's original query: {user_query}\n\nRouter intent: {intent}\n\nQuery classification: {query_classification}\n\nHas run_analysis been called: {has_run_analysis}\n\nReview the conversation and determine if the response adequately answers the user's question."
         if tool_results_summary:
             system_content += "\n\nTool Results Summary:\n" + "\n".join(
                 tool_results_summary
@@ -345,9 +368,10 @@ class VerifierNode(BaseNode):
                         "Verifier indicated response is sufficient (parsed from text)"
                     )
 
-            # Fallback: check if run_analysis was called
+            # Fallback: check if run_analysis was called (only for ANALYSIS intent)
             if (
-                query_classification in ["DATA_ANALYSIS", "BOTH"]
+                intent == "ANALYSIS"
+                and query_classification in ["DATA_ANALYSIS", "BOTH"]
                 and not has_run_analysis
             ):
                 return {

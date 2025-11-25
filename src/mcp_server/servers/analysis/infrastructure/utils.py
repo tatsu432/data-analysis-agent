@@ -25,6 +25,30 @@ DEPRECATED_STYLE_MAPPING = {
 }
 
 
+def preprocess_code_to_save_plots(code: str) -> str:
+    """
+    Preprocess code to replace plt.show() with plt.savefig(plot_filename).
+
+    This ensures that plots are saved to files instead of being displayed,
+    which is required for the agentic system to capture and return plot images.
+
+    Args:
+        code: Python code string to preprocess
+
+    Returns:
+        Preprocessed code string with plt.show() replaced by plt.savefig(plot_filename)
+    """
+    # Replace plt.show() with plt.savefig(plot_filename)
+    # This handles various formats: plt.show(), plt.show( ), plt.show(block=True), etc.
+    preprocessed_code = re.sub(
+        r"plt\.show\s*\([^)]*\)",
+        "plt.savefig(plot_filename)",
+        code,
+        flags=re.IGNORECASE,
+    )
+    return preprocessed_code
+
+
 def preprocess_code_for_deprecated_styles(code: str) -> str:
     """
     Preprocess code to replace deprecated matplotlib/seaborn styles with valid alternatives.

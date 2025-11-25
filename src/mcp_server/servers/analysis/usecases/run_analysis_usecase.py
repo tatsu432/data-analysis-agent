@@ -48,6 +48,7 @@ from ..infrastructure.utils import (
     detect_and_convert_datetime_columns,
     get_valid_style_fallback,
     preprocess_code_for_deprecated_styles,
+    preprocess_code_to_save_plots,
     validate_plot,
 )
 from ..schema.input import RunAnalysisInput
@@ -277,15 +278,25 @@ class RunAnalysisUseCase:
         }
 
         try:
-            # Preprocess code to replace deprecated matplotlib styles
-            preprocessed_code = preprocess_code_for_deprecated_styles(payload.code)
-            if preprocessed_code != payload.code:
-                logger.info("Code was preprocessed to replace deprecated styles")
+            # Preprocess code: replace plt.show() with plt.savefig(plot_filename)
+            code_after_plot_fix = preprocess_code_to_save_plots(payload.code)
+            if code_after_plot_fix != payload.code:
+                logger.info(
+                    "Code was preprocessed to replace plt.show() with plt.savefig(plot_filename)"
+                )
                 logger.debug(f"Original code:\n{payload.code}")
-                logger.debug(f"Preprocessed code:\n{preprocessed_code}")
+                logger.debug(f"After plot fix:\n{code_after_plot_fix}")
+
+            # Preprocess code to replace deprecated matplotlib styles
+            preprocessed_code = preprocess_code_for_deprecated_styles(
+                code_after_plot_fix
+            )
+            if preprocessed_code != code_after_plot_fix:
+                logger.info("Code was preprocessed to replace deprecated styles")
+                logger.debug(f"After style fix:\n{preprocessed_code}")
                 code_to_execute = preprocessed_code
             else:
-                code_to_execute = payload.code
+                code_to_execute = code_after_plot_fix
 
             # Redirect stdout and stderr
             old_stdout = sys.stdout
