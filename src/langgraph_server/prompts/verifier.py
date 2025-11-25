@@ -19,38 +19,29 @@ CRITICAL CHECKS FOR DATA_ANALYSIS QUERIES:
 - If the agent provided tool responses (like dataset lists) as the final answer without executing analysis, the answer is INSUFFICIENT
 - The answer is only SUFFICIENT if run_analysis was called and actual analysis results were provided
 
-You MUST output ONLY a valid JSON object with this structure:
+OUTPUT FORMAT:
+You must output a valid JSON object with this exact structure:
 {{
-  "is_sufficient": true/false,
+  "is_sufficient": true or false,
   "reason": "brief explanation of why the answer is sufficient or insufficient",
   "feedback": "specific feedback for the agent if insufficient, or empty string if sufficient"
 }}
 
-CRITICAL OUTPUT RULES:
-- Output ONLY the JSON object, nothing else
-- Do NOT wrap the JSON in markdown code blocks (no ```json or ```)
-- Do NOT add any text before or after the JSON
-- Do NOT add comments or explanations
-- Start your response with {{ and end with }}
+OUTPUT GUIDELINES:
+- Output valid JSON with the structure above
+- You may optionally wrap the JSON in markdown code blocks (```json ... ```) if you prefer, but plain JSON is also fine
+- Use lowercase true/false for boolean values (not True/False)
 - All keys must be in double quotes
-- Use true/false (lowercase) for boolean values, not True/False
-- If is_sufficient is false, provide clear feedback on what's missing
+- If is_sufficient is false, provide clear, actionable feedback on what's missing
+- If is_sufficient is true, set feedback to an empty string ""
 
-CORRECT OUTPUT FORMAT:
-{{"is_sufficient": true, "reason": "The response adequately answers the question", "feedback": ""}}
-
-WRONG OUTPUT FORMATS (DO NOT DO THIS):
-- ```json{{"is_sufficient": true}}```  ❌ (no markdown blocks)
-- Here's my analysis: {{"is_sufficient": true}}  ❌ (no text before)
-- {{"is_sufficient": true}} The response is good.  ❌ (no text after)
+IMPORTANT: Always provide your best assessment. Never refuse to output JSON. If you're uncertain, make your best judgment and explain it in the "reason" field.
 
 Examples:
-- User asks "Show me COVID cases in Tokyo" and agent only lists datasets → is_sufficient: false, feedback: "You only listed datasets but did not execute the analysis. You must call run_analysis to perform the actual data analysis and answer the user's question."
-- User asks "Show me COVID cases in Tokyo" and agent called run_analysis with results → is_sufficient: true, feedback: ""
-- User asks "What does GP mean?" and agent provides definition → is_sufficient: true, feedback: """
-            "",
+- User asks "Show me COVID cases in Tokyo" and agent only lists datasets → {{"is_sufficient": false, "reason": "Only dataset listing tools were called, no actual analysis was performed", "feedback": "You only listed datasets but did not execute the analysis. You must call run_analysis to perform the actual data analysis and answer the user's question."}}
+- User asks "Show me COVID cases in Tokyo" and agent called run_analysis with results → {{"is_sufficient": true, "reason": "run_analysis was called and actual analysis results were provided", "feedback": ""}}
+- User asks "What does GP mean?" and agent provides definition → {{"is_sufficient": true, "reason": "The response adequately answers the user's question with a clear definition", "feedback": ""}}""",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
 )
-

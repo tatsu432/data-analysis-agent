@@ -111,7 +111,7 @@ class QwenOllamaSettings(BaseLLMModelSettings):
         description="Optional API key (dummy key will be used if not provided)",
     )
     tool_choice: Literal["auto", "required", "none"] | str | None = Field(
-        default="required",
+        default="auto",
         description="Tool choice behavior: 'auto' (model decides), 'required' (must use a tool), 'none' (no tools), or specific tool name",
     )
 

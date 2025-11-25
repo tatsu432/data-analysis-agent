@@ -263,8 +263,6 @@ The agent can:
 1. **Export to Confluence**: Create structured reports from analysis results
 2. **Read from Confluence**: Search and summarize existing pages
 
-See [CONFLUENCE_MCP_SETUP.md](CONFLUENCE_MCP_SETUP.md) for setup instructions.
-
 ---
 
 ## Generate Workflow Diagram
