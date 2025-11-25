@@ -108,8 +108,15 @@ data-analysis-agent/
 │   │   ├── schema.py              # Pydantic schemas
 │   │   └── settings.py            # Server configuration
 │   │
-│   └── app/
-│       └── ui.py                  # Streamlit UI
+│   ├── app/
+│   │   └── ui.py                  # Streamlit UI
+│   │
+│   └── teams_bot/                 # Microsoft Teams bot
+│       ├── __init__.py
+│       ├── config.py              # Bot configuration settings
+│       ├── langgraph_client.py    # LangGraph API client wrapper
+│       ├── bot.py                 # Bot Framework bot handler
+│       └── server.py              # HTTP server with Bot Framework adapter
 │
 └── README.md
 ```
@@ -144,6 +151,11 @@ MCP_SERVER_URL=http://localhost:8082/mcp
 LANGGRAPH_SERVER_URL=http://localhost:2024
 LANGGRAPH_ASSISTANT_ID=<your-assistant-uuid>
 
+# Microsoft Teams Bot (optional for local development, required for production)
+MICROSOFT_APP_ID=<your-azure-app-id>  # Leave empty for local dev with emulator
+MICROSOFT_APP_PASSWORD=<your-azure-app-password>  # Leave empty for local dev with emulator
+TEAMS_BOT_PORT=3978  # Optional, defaults to 3978
+
 # Optional: Confluence credentials (enables Confluence tools in unified server)
 CONFLUENCE_URL=https://yourcompany.atlassian.net
 CONFLUENCE_USERNAME=your.email@company.com
@@ -171,6 +183,12 @@ langgraph dev --config src/langgraph_server/langgraph.json
 ```bash
 streamlit run src/app/ui.py
 ```
+
+**Terminal 3 (Alternative) - Microsoft Teams Bot:**
+```bash
+python -m src.teams_bot.server
+```
+This starts the Teams bot HTTP server on port 3978 (configurable via `TEAMS_BOT_PORT`).
 
 ### 4. Alternative: CLI Mode
 
@@ -271,6 +289,74 @@ The agent can:
 python -m src.langgraph_server.generate_diagram
 # Options: --output, --format (png/svg/mermaid)
 ```
+
+---
+
+## Microsoft Teams Bot Integration
+
+The agent can be accessed via Microsoft Teams as a bot, allowing users to interact with the data analysis agent directly from Teams.
+
+### Architecture
+
+```
+Teams User → Microsoft Teams → Azure Bot Service → Teams Bot HTTP Server → LangGraph Server + MCP
+```
+
+The Teams bot is implemented using the Bot Framework SDK v4 for Python and provides a natural language interface to the same agent backend used by the Streamlit UI.
+
+### Setup
+
+1. **Create Azure Bot Resource**:
+   - Create an Azure Bot resource in the Azure Portal
+   - Note the App ID and generate a client secret (App Password)
+   - Configure the messaging endpoint to point to your bot server (e.g., `https://your-domain.com/api/messages`)
+
+2. **Configure Environment Variables**:
+   ```bash
+   MICROSOFT_APP_ID=<your-azure-app-id>
+   MICROSOFT_APP_PASSWORD=<your-azure-app-password>
+   TEAMS_BOT_PORT=3978  # Optional, defaults to 3978
+   ```
+
+3. **Start the Bot Server**:
+   ```bash
+   # Make sure MCP server and LangGraph server are running first
+   python -m src.teams_bot.server
+   ```
+
+4. **Local Testing with Bot Framework Emulator**:
+   - Download and install the [Bot Framework Emulator](https://github.com/Microsoft/BotFramework-Emulator/releases)
+   - For local development, you can leave `MICROSOFT_APP_ID` and `MICROSOFT_APP_PASSWORD` empty in your `.env` file (authentication will be bypassed)
+   - Configure the emulator with:
+     - Endpoint: `http://localhost:3978/api/messages`
+     - App ID: Leave empty or use any value (ignored when bot's app_id is empty)
+     - App Password: Leave empty or use any value (ignored when bot's app_password is empty)
+   - **Important**: 
+     - Use the **Bot Framework Emulator** (not Web Chat) for local testing without credentials
+     - The emulator uses `channelId="emulator"` which works without Azure credentials
+     - Bot Framework Web Chat (`channelId="webchat"`) requires valid Azure credentials
+     - For production deployment, you must set valid `MICROSOFT_APP_ID` and `MICROSOFT_APP_PASSWORD`
+
+### Features
+
+- **Natural Language Interface**: Users can ask analytical questions in Teams
+- **Conversation State**: Each Teams conversation maintains its own thread state in LangGraph
+- **Error Handling**: Friendly error messages if something goes wrong
+- **Welcome Message**: Automatic greeting when the bot is added to a conversation
+
+### Usage
+
+Once the bot is deployed and added to a Teams channel or chat:
+
+1. Users can send messages directly to the bot
+2. The bot processes queries through the LangGraph agent
+3. Responses are sent back to the Teams conversation
+4. Each conversation maintains its own context/thread
+
+Example interactions:
+- "Show me COVID cases in Tokyo from January to July 2022"
+- "What does GP mean?"
+- "Compare GP vs HP patient counts"
 
 ---
 
