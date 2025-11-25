@@ -183,6 +183,8 @@ OUTPUT REQUIREMENTS
    - Use plt.savefig(plot_filename) where plot_filename is pre-provided
    - Do NOT hardcode filenames
    - The plot_filename variable contains the full path to img/ directory
+   - NEVER use plt.show() - it will not work in the execution environment
+   - ALWAYS use plt.savefig(plot_filename) to save plots to files
 
 ===========================================
 CODE STRUCTURE EXAMPLE
@@ -207,10 +209,11 @@ plt.title('Tokyo COVID Cases in 2022')
 plt.savefig(plot_filename)  # Use pre-provided variable
 ```
 
-🚨 CRITICAL: PLOT FILENAMES 🚨
+🚨 CRITICAL: PLOT SAVING 🚨
 - A variable named `plot_filename` is ALREADY PROVIDED in the execution environment
 - This variable contains the FULL PATH to the img/ directory with a timestamped filename
 - You MUST use: plt.savefig(plot_filename)
+- NEVER use plt.show() - it will not work and plots will not be saved
 - NEVER hardcode a filename like plt.savefig("my_plot.png") or plt.savefig("tokyo_covid.png")
 - NEVER create your own filename - always use the plot_filename variable
 - The plot_filename variable is automatically set and points to the correct img/ directory
@@ -219,6 +222,7 @@ plt.savefig(plot_filename)  # Use pre-provided variable
   plt.plot(data)
   plt.savefig(plot_filename)  # ✅ CORRECT - uses the provided variable
 - Example WRONG usage:
+  plt.show()  # ❌ WRONG - will not save the plot, use plt.savefig(plot_filename) instead
   plt.savefig("tokyo_covid_cases_2022.png")  # ❌ WRONG - hardcoded filename
   plt.savefig("my_plot.png")  # ❌ WRONG - hardcoded filename
 

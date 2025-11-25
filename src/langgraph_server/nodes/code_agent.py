@@ -55,6 +55,18 @@ class CodeAgentNode(BaseNode):
             logger.warning("No code extracted from response, using empty string")
             code = "# No code generated"
 
+        # CRITICAL: Replace plt.show() with plt.savefig(plot_filename)
+        # This ensures plots are saved to files instead of being displayed
+        # This handles various formats: plt.show(), plt.show( ), plt.show(block=True), etc.
+        if re.search(r"plt\.show\s*\(", code, re.IGNORECASE):
+            logger.info("Replacing plt.show() with plt.savefig(plot_filename)")
+            code = re.sub(
+                r"plt\.show\s*\([^)]*\)",
+                "plt.savefig(plot_filename)",
+                code,
+                flags=re.IGNORECASE,
+            )
+
         # Validate: Check for hardcoded plot filenames (common mistake)
         # Look for plt.savefig with string literals instead of plot_filename variable
         hardcoded_patterns = [

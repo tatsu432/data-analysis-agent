@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated, Literal
 
 from dotenv import load_dotenv
@@ -93,6 +94,26 @@ def filter_tools_by_domain(tools: list[BaseTool], domain: str) -> list[BaseTool]
         f"{[tool.name for tool in filtered]}"
     )
     return filtered
+
+
+def _build_plain_text_llm_config(base_config):
+    """Return a lightweight config object with JSON/tool constraints removed."""
+    llm_params = base_config.llm_params.copy()
+    llm_params.pop("response_format", None)
+
+    overrides: dict[str, object] = {}
+    if hasattr(base_config, "tool_choice"):
+        overrides["tool_choice"] = None
+    if hasattr(base_config, "tools"):
+        overrides["tools"] = []
+
+    return SimpleNamespace(
+        llm_model_name=base_config.llm_model_name,
+        llm_model_provider=base_config.llm_model_provider,
+        temperature=base_config.temperature,
+        llm_params=llm_params,
+        **overrides,
+    )
 
 
 async def create_agent():
@@ -240,11 +261,42 @@ async def create_agent():
     else:
         tool_agent_llm = coding_llm
 
-    # Initialize verifier LLM (use verifier_llm if configured, otherwise use json_llm)
+    # Initialize verifier LLM
+    # CRITICAL: Verifier needs a clean LLM WITHOUT forced JSON mode to prevent refusals
+    # The prompt will instruct JSON output, but we don't force it at the model level
     if settings.verifier_llm:
-        verifier_llm = initialize_llm(settings.verifier_llm)
+        # If verifier_llm is configured, use it but ensure no JSON mode
+        verifier_llm_config = settings.verifier_llm.model_copy()
+        # Explicitly remove response_format if present
+        if "response_format" in verifier_llm_config.llm_params:
+            verifier_llm_params = verifier_llm_config.llm_params.copy()
+            verifier_llm_params.pop("response_format", None)
+            verifier_llm_config = verifier_llm_config.model_copy(
+                update={"llm_params": verifier_llm_params}
+            )
+        verifier_llm = initialize_llm(verifier_llm_config)
+        logger.info(
+            "Initialized verifier_llm from settings.verifier_llm (JSON mode explicitly removed)"
+        )
     else:
-        verifier_llm = llm_json  # Use JSON LLM for structured verification output
+        # Use main LLM config but ensure no JSON mode (unlike router which needs JSON mode)
+        verifier_llm_config = settings.chat_llm.model_copy()
+        # Use low temperature for deterministic verification
+        verifier_temperature = min(0.2, max(0.0, settings.chat_llm.temperature))
+        verifier_llm_config = verifier_llm_config.model_copy(
+            update={"temperature": verifier_temperature}
+        )
+        # Explicitly remove response_format if present
+        if "response_format" in verifier_llm_config.llm_params:
+            verifier_llm_params = verifier_llm_config.llm_params.copy()
+            verifier_llm_params.pop("response_format", None)
+            verifier_llm_config = verifier_llm_config.model_copy(
+                update={"llm_params": verifier_llm_params}
+            )
+        verifier_llm = initialize_llm(verifier_llm_config)
+        logger.info(
+            "Initialized verifier_llm from settings.chat_llm (JSON mode explicitly removed, low temperature)"
+        )
 
     # Create node instances
     router_node = RouterNode(llm_json)
@@ -253,7 +305,10 @@ async def create_agent():
     confluence_agent_node = ConfluenceAgentNode(confluence_llm)
     code_agent_node = CodeAgentNode(coding_llm)
     tool_agent_node = ToolAgentNode(tool_agent_llm)
-    final_responder_node = FinalResponderNode(llm)
+    # Final responder must never inherit JSON/tool constraints - give it a clean LLM.
+    final_llm_config = _build_plain_text_llm_config(settings.chat_llm)
+    final_llm = initialize_llm(final_llm_config)
+    final_responder_node = FinalResponderNode(final_llm)
     verifier_node = VerifierNode(verifier_llm)
     tools_node = ToolsNode(all_tools)  # Tools node executes all tools
 
@@ -344,14 +399,14 @@ async def create_agent():
         ):
             return "tools"
 
-        return "final_responder"
+        return "verifier"
 
     workflow.add_conditional_edges(
         "knowledge_agent",
         route_from_knowledge_agent,
         {
             "tools": "tools",
-            "final_responder": "final_responder",
+            "verifier": "verifier",
         },
     )
 
@@ -369,14 +424,14 @@ async def create_agent():
         ):
             return "tools"
 
-        return "final_responder"
+        return "verifier"
 
     workflow.add_conditional_edges(
         "confluence_agent",
         route_from_confluence_agent,
         {
             "tools": "tools",
-            "final_responder": "final_responder",
+            "verifier": "verifier",
         },
     )
 
