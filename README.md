@@ -25,7 +25,13 @@ The system consists of two main components:
    - **Knowledge Tools**: Knowledge base search, term definitions (search_knowledge, get_term_definition, list_documents)
    - **Confluence Tools**: Confluence integration (search_pages, get_page, create_page, update_page)
 
+### System Architecture Diagram
+
+![Current Architecture](current_architecture.png)
+
 ### Agent Workflow
+
+![Agent Workflow](agent_workflow.png)
 
 ```
 User Query
