@@ -40,4 +40,5 @@ dependencies = [
     "aiohttp>=3.13.2",
     "fastapi>=0.121.3",
     "uvicorn>=0.38.0",
+    "openai>=2.8.0",
 ]
