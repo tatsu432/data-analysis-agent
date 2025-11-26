@@ -27,6 +27,7 @@ class LLMProvider(StrEnum):
     ANTHROPIC = "anthropic"
     LOCAL = "local"
     QWEN_OLLAMA = "qwen_ollama"
+    VLLM = "vllm"
 
 
 class BaseLLMModelSettings(BaseModel):
@@ -128,12 +129,50 @@ class QwenOllamaSettings(BaseLLMModelSettings):
         }
 
 
+class VLLMSettings(BaseLLMModelSettings, ApiKeySettings):
+    """Settings for vLLM served via an OpenAI-compatible HTTP API.
+
+    Typical deployment is a vLLM server exposed on an internal or public URL
+    (e.g. behind an API gateway) that speaks the OpenAI Chat Completions API.
+    """
+
+    llm_model_provider: Literal[LLMProvider.VLLM] = LLMProvider.VLLM
+    base_url: str = Field(
+        description=(
+            "Base URL for the vLLM server exposing an OpenAI-compatible API, "
+            "e.g. http://your-ec2-host:8000/v1"
+        ),
+    )
+
+    @property
+    def llm_params(self) -> dict[str, Any]:
+        """Return parameters for vLLM's OpenAI-compatible API.
+
+        We deliberately set model_provider=\"openai\" so `init_chat_model` routes
+        through the OpenAI-compatible client while allowing a custom base_url.
+        """
+        return {
+            "base_url": self.base_url,
+            "model_provider": "openai",
+            "api_key": self.api_key,
+        }
+
+
 LLMSettings = Annotated[
-    OpenAISettings | AnthropicSettings | LocalLLMSettings | QwenOllamaSettings,
+    OpenAISettings
+    | AnthropicSettings
+    | LocalLLMSettings
+    | QwenOllamaSettings
+    | VLLMSettings,
     Field(discriminator="llm_model_provider"),
 ]
 OptionalLLMSettings = Annotated[
-    OpenAISettings | AnthropicSettings | LocalLLMSettings | QwenOllamaSettings | None,
+    OpenAISettings
+    | AnthropicSettings
+    | LocalLLMSettings
+    | QwenOllamaSettings
+    | VLLMSettings
+    | None,
     Field(default=None, discriminator="llm_model_provider"),
 ]
 
