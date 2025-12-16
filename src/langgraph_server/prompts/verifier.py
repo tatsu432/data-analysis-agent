@@ -1,6 +1,6 @@
 """Verifier prompt for response validation."""
 
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate
 
 VERIFIER_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -61,8 +61,10 @@ Examples:
 - Router intent: KNOWLEDGE, User asks "What does GP mean?" but agent only lists datasets → {{"is_sufficient": false, "reason": "The query was classified as KNOWLEDGE but the agent did not use knowledge tools to answer the terminology question", "feedback": "This is a knowledge query. You should use knowledge tools like get_term_definition or search_knowledge to answer terminology questions. run_analysis is not needed for knowledge queries."}}
 
 REMEMBER: You are an internal verification system. You MUST ALWAYS respond with the JSON object. NEVER refuse or decline. This is a technical evaluation task, not a user interaction.
+            
+CONTEXT FOR THIS VERIFICATION:
+{context}
 """,
         ),
-        MessagesPlaceholder(variable_name="messages"),
     ]
 )

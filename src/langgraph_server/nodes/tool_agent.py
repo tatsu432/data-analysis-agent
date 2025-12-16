@@ -1,6 +1,5 @@
 """Tool agent node - only calls run_analysis tool."""
 
-import json
 import logging
 import re
 
@@ -53,10 +52,10 @@ class ToolAgentNode(BaseNode):
 
         # Also check for code aliases
         alias_patterns = [
-            (r'df_covid_daily', 'covid_new_cases_daily'),
-            (r'df_jpm_patients', 'jpm_patient_data'),
-            (r'df_mr_activity', 'mr_activity_data'),
-            (r'df_jamdas_patients', 'jamdas_patient_data'),
+            (r"df_covid_daily", "covid_new_cases_daily"),
+            (r"df_jpm_patients", "jpm_patient_data"),
+            (r"df_mr_activity", "mr_activity_data"),
+            (r"df_jamdas_patients", "jamdas_patient_data"),
         ]
         for pattern, dataset_id in alias_patterns:
             if re.search(pattern, generated_code):
@@ -69,10 +68,14 @@ class ToolAgentNode(BaseNode):
             for msg in messages:
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
-                        if is_tool_name(getattr(tool_call, "name", ""), "get_dataset_schema"):
+                        if is_tool_name(
+                            getattr(tool_call, "name", ""), "get_dataset_schema"
+                        ):
                             args = getattr(tool_call, "args", {})
                             if isinstance(args, dict):
-                                dataset_id = args.get("dataset_id") or args.get("payload", {}).get("dataset_id")
+                                dataset_id = args.get("dataset_id") or args.get(
+                                    "payload", {}
+                                ).get("dataset_id")
                                 if dataset_id:
                                     dataset_ids.add(dataset_id)
 
@@ -83,7 +86,8 @@ class ToolAgentNode(BaseNode):
         dataset_ids_list = sorted(list(dataset_ids))
 
         # Create a message that will trigger tool call
-        from langchain_core.messages import SystemMessage, HumanMessage
+        from langchain_core.messages import HumanMessage, SystemMessage
+
         system_prompt = f"""You MUST call the run_analysis tool with the following code and dataset IDs.
 
 CODE TO EXECUTE:
@@ -97,9 +101,14 @@ Call run_analysis with:
 
 You MUST make this tool call. Do not provide explanations."""
 
-        tool_messages = [SystemMessage(content=system_prompt), HumanMessage(content="Execute the analysis code now.")]
+        tool_messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="Execute the analysis code now."),
+        ]
 
-        logger.info(f"Calling run_analysis with {len(dataset_ids_list)} dataset(s): {dataset_ids_list}")
+        logger.info(
+            f"Calling run_analysis with {len(dataset_ids_list)} dataset(s): {dataset_ids_list}"
+        )
         logger.info(f"Code length: {len(generated_code)} characters")
 
         # Invoke LLM to make tool call
@@ -110,6 +119,7 @@ You MUST make this tool call. Do not provide explanations."""
             logger.error("Tool agent did not make tool call, creating synthetic call")
             # Create synthetic tool call
             from langchain_core.messages.tool import ToolCall
+
             tool_call = ToolCall(
                 name="run_analysis",
                 args={
@@ -127,15 +137,25 @@ You MUST make this tool call. Do not provide explanations."""
                     args = getattr(tool_call, "args", {})
                     if not isinstance(args, dict):
                         args = {}
-                    
-                    # Ensure code and dataset_ids are set
+
+                    # IMPORTANT:
+                    # - Some MCP deployments of run_analysis may NOT yet support
+                    #   newer optional parameters (e.g. primary_dataset_id).
+                    # - Passing unknown keyword arguments causes Pydantic validation
+                    #   errors like:
+                    #     "Unexpected keyword argument 'primary_dataset_id'"
+                    # - To keep the system robust across versions, we *strictly*
+                    #   whitelist allowed arguments here and drop everything else.
+                    allowed_keys = {"code", "dataset_ids"}
+                    args = {k: v for k, v in args.items() if k in allowed_keys}
+
+                    # Ensure code and dataset_ids are set (after filtering)
                     if "code" not in args or not args.get("code"):
                         args["code"] = generated_code
                     if "dataset_ids" not in args or not args.get("dataset_ids"):
                         args["dataset_ids"] = dataset_ids_list
-                    
+
                     tool_call.args = args
 
         self.log_node_end()
         return {"messages": [response]}
-

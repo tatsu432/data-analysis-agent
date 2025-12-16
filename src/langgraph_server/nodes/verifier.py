@@ -147,49 +147,75 @@ class VerifierNode(BaseNode):
         # Use LLM to verify the response
         # Get recent conversation context (last few messages)
         recent_messages_raw = messages[-10:]  # Last 10 messages for context
-        recent_messages = []
         tool_results_summary = []
+        conversation_lines = []
 
         for msg in recent_messages_raw:
             if isinstance(msg, ToolMessage):
-                # Convert tool messages to text summaries to avoid pairing issues
+                # Summarize tool messages
                 tool_name = getattr(msg, "name", "tool")
                 tool_content = extract_content_text(getattr(msg, "content", ""))
-                tool_results_summary.append(f"[{tool_name}]: {tool_content[:300]}")
-            elif (
-                isinstance(msg, AIMessage)
-                and hasattr(msg, "tool_calls")
-                and msg.tool_calls
-            ):
-                # AI message with tool_calls - convert to text summary but preserve AI role
+                summarized = tool_content[:300] if tool_content else ""
+                tool_results_summary.append(f"[{tool_name}]: {summarized}")
+                conversation_lines.append(f"Tool ({tool_name}): {summarized}")
+            elif isinstance(msg, AIMessage):
                 ai_content = extract_content_text(getattr(msg, "content", ""))
-                if ai_content:
-                    recent_messages.append(
-                        AIMessage(content=f"[AI called tools]: {ai_content[:500]}")
-                    )
-                else:
-                    # No content, just tool calls - create a summary
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
                     tool_names = [getattr(tc, "name", "tool") for tc in msg.tool_calls]
-                    recent_messages.append(
-                        AIMessage(content=f"[AI called tools: {', '.join(tool_names)}]")
-                    )
+                    if ai_content:
+                        conversation_lines.append(
+                            f"AI (called tools: {', '.join(tool_names)}): {ai_content[:500]}"
+                        )
+                    else:
+                        conversation_lines.append(
+                            f"AI (called tools: {', '.join(tool_names)})"
+                        )
+                else:
+                    conversation_lines.append(f"AI: {ai_content[:500]}")
             else:
-                # Human messages and AI messages without tool_calls - keep as-is
-                recent_messages.append(msg)
+                # Treat other messages (typically human) explicitly
+                content = extract_content_text(getattr(msg, "content", ""))
+                msg_type = getattr(msg, "type", "")
+                if msg_type == "human":
+                    conversation_lines.append(f"Human: {content[:500]}")
+                elif msg_type == "system":
+                    # Skip other system messages to avoid confusing the verifier
+                    continue
+                else:
+                    # Fallback for any other message types
+                    conversation_lines.append(
+                        f"{msg_type or 'Message'}: {content[:500]}"
+                    )
 
-        # Add tool results summary to system message if any were filtered
-        system_content = f"User's original query: {user_query}\n\nRouter intent: {intent}\n\nQuery classification: {query_classification}\n\nHas run_analysis been called: {has_run_analysis}\n\nReview the conversation and determine if the response adequately answers the user's question."
-        if tool_results_summary:
-            system_content += "\n\nTool Results Summary:\n" + "\n".join(
-                tool_results_summary
+        conversation_log = "\n".join(conversation_lines) if conversation_lines else ""
+
+        # Build a single unified context string that includes:
+        # - User query
+        # - Router intent and query classification
+        # - Whether run_analysis was called
+        # - Recent conversation between human, AI, and tools
+        # - Summarized tool results (if any)
+        context_parts = [
+            f"User's original query:\n{user_query}",
+            f"Router intent: {intent}",
+            f"Query classification: {query_classification}",
+            f"Has run_analysis been called: {has_run_analysis}",
+        ]
+
+        if conversation_log:
+            context_parts.append(
+                "Conversation history (most recent messages last):\n" + conversation_log
             )
 
-        # Create verification prompt
-        verification_messages = [
-            SystemMessage(content=system_content)
-        ] + recent_messages
+        if tool_results_summary:
+            context_parts.append(
+                "Tool Results Summary:\n" + "\n".join(tool_results_summary)
+            )
 
-        prompt = VERIFIER_PROMPT.invoke({"messages": verification_messages})
+        full_context = "\n\n".join(context_parts)
+
+        # Create verification prompt with a single combined context string
+        prompt = VERIFIER_PROMPT.invoke({"context": full_context})
         logger.info("Invoking verifier LLM...")
 
         # Try up to 2 times to get valid JSON
@@ -203,14 +229,12 @@ class VerifierNode(BaseNode):
                     logger.warning(
                         f"Retrying verifier JSON parsing (attempt {attempt + 1}/{max_parse_attempts})"
                     )
-                    # Add a more explicit instruction for retry
-                    retry_system_msg = SystemMessage(
-                        content="CRITICAL: You MUST output ONLY a valid JSON object. No markdown, no code blocks, no text before or after. Just the JSON object starting with { and ending with }."
+                    # Add a more explicit instruction for retry while keeping the same structured context
+                    retry_context = (
+                        full_context
+                        + "\n\nCRITICAL: You MUST output ONLY a valid JSON object. No markdown, no code blocks, no text before or after. Just the JSON object starting with { and ending with }."
                     )
-                    retry_messages = [retry_system_msg] + verification_messages[
-                        1:
-                    ]  # Keep the original system message context
-                    retry_prompt = VERIFIER_PROMPT.invoke({"messages": retry_messages})
+                    retry_prompt = VERIFIER_PROMPT.invoke({"context": retry_context})
                     response = self.llm_json.invoke(retry_prompt.messages)
                 else:
                     response = self.llm_json.invoke(prompt.messages)
