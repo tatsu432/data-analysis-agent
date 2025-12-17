@@ -75,6 +75,16 @@ jobs:
         run: |
           uv run python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
 
+      - name: Show evaluation report on failure
+        if: failure()
+        run: |
+          echo "===== EVAL REPORT ====="
+          if [ -f eval_report.json ]; then
+            cat eval_report.json
+          else
+            echo "eval_report.json not found"
+          fi
+
       - name: Show server logs on failure
         if: failure()
         run: |
