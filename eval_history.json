@@ -1,0 +1,36 @@
+{
+  "runs": [
+    {
+      "timestamp": "2025-12-17T14:25:35.498345+00:00",
+      "git_sha": "c0e4aef0900562e0539092f6a2c53c62aec0a825",
+      "fail_under": 0.5,
+      "cases_dir": "eval/cases",
+      "overall_score": 0.6666666666666666,
+      "pass": true,
+      "num_cases": 3,
+      "cases": [
+        {
+          "id": "basic-capabilities",
+          "score": 1.0,
+          "latency_seconds": 28.867390871047974,
+          "passed": true,
+          "critical": false
+        },
+        {
+          "id": "json-score",
+          "score": 1.0,
+          "latency_seconds": 13.642081022262573,
+          "passed": true,
+          "critical": true
+        },
+        {
+          "id": "plot-generation",
+          "score": 0.0,
+          "latency_seconds": 16.088810682296753,
+          "passed": false,
+          "critical": false
+        }
+      ]
+    }
+  ]
+}
