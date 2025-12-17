@@ -42,4 +42,5 @@ dependencies = [
     "uvicorn>=0.38.0",
     "openai>=2.8.0",
     "pyyaml>=6.0.0",
+    "langgraph-api==0.6.5",
 ]

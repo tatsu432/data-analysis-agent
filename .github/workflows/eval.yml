@@ -51,12 +51,6 @@ jobs:
         run: |
           uv sync --frozen
 
-      - name: Install LangGraph CLI with in-memory API support
-        run: |
-          # Install LangGraph CLI and force a recent langgraph-api to avoid
-          # known SSE bugs in older versions (e.g. 0.5.42).
-          uv pip install -U "langgraph-cli[inmem]" "langgraph-api>=0.6.5"
-
       - name: Start MCP server
         run: |
           nohup uv run python -m src.mcp_server > mcp.log 2>&1 &
