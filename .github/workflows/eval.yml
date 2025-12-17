@@ -98,12 +98,17 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add eval_history.json
+          # Always stage the latest single-run report and aggregated history
+          git add eval_report.json eval_history.json
+          # Also commit the latest plot if it exists (explicitly allowed in .gitignore)
+          if [ -f img/eval_history.png ]; then
+            git add img/eval_history.png
+          fi
           # Only commit if there are changes
           if git diff --staged --quiet; then
-            echo "No changes to eval_history.json to commit"
+            echo "No eval files changed; nothing to commit"
           else
-            git commit -m "chore: update eval_history.json [skip ci]"
+            git commit -m "chore: update eval reports [skip ci]"
             git push
           fi
 
