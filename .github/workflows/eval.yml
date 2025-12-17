@@ -71,6 +71,10 @@ jobs:
         run: |
           uv run python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
 
+      - name: Update evaluation history (local file)
+        run: |
+          uv run python -m eval.update_history --report eval_report.json --history eval_history.json
+
       - name: Show evaluation report on failure
         if: failure()
         run: |
@@ -97,6 +101,7 @@ jobs:
           name: eval-artifacts
           path: |
             eval_report.json
+            eval_history.json
             mcp.log
             langgraph.log
 
