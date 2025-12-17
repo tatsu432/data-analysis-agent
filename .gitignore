@@ -49,7 +49,7 @@ Thumbs.db
 practice*
 
 # Data
-data*
+data/kaggle_covid/*
 !datasets_registry.py
 !dataset_store.py
 
