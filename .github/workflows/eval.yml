@@ -38,6 +38,10 @@ jobs:
         run: |
           uv sync --frozen
 
+      - name: Install LangGraph CLI with in-memory API support
+        run: |
+          uv pip install -U "langgraph-cli[inmem]"
+
       - name: Start MCP server
         run: |
           nohup uv run python -m src.mcp_server > mcp.log 2>&1 &
