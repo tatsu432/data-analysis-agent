@@ -25,35 +25,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v3
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Sync dependencies with uv (uses lockfile cache)
         run: |
-          python -m pip install --upgrade pip
-          pip install .
+          uv sync --frozen
 
       - name: Start MCP server
         run: |
-          nohup python -m src.mcp_server > mcp.log 2>&1 &
+          nohup uv run python -m src.mcp_server > mcp.log 2>&1 &
 
       - name: Wait for MCP server
         run: |
-          python scripts/wait_for_http.py "http://localhost:8082/health" --timeout 90 --interval 3
+          uv run python scripts/wait_for_http.py "http://localhost:8082/health" --timeout 90 --interval 3
 
       - name: Start LangGraph server
         run: |
-          nohup langgraph dev --config src/langgraph_server/langgraph.json > langgraph.log 2>&1 &
+          nohup uv run langgraph dev --config src/langgraph_server/langgraph.json > langgraph.log 2>&1 &
 
       - name: Wait for LangGraph server
         run: |
-          python scripts/wait_for_http.py "${{ env.LANGGRAPH_SERVER_URL }}/docs" --timeout 120 --interval 3
+          uv run python scripts/wait_for_http.py "${{ env.LANGGRAPH_SERVER_URL }}/docs" --timeout 120 --interval 3
 
       - name: Run evaluation
         run: |
-          python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
+          uv run python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
 
       - name: Upload evaluation artifacts
         if: always()
