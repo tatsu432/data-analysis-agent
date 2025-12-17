@@ -1,0 +1,8 @@
+id: "basic-capabilities"
+query: "In one short paragraph, explain what the Data Analysis Agent can do."
+critical: false
+checks:
+  # Keep this intentionally loose so minor wording changes don't break CI.
+  - type: contains
+    text: "data"
+

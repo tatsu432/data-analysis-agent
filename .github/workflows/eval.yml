@@ -1,0 +1,140 @@
+name: Agent Evaluation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to commit eval_history.json back to repo
+
+    env:
+      # Safe defaults for CI
+      ENABLE_CONFLUENCE: "false"
+      MCP_SERVER_URL: "http://localhost:8082/mcp"
+      LANGGRAPH_SERVER_URL: "http://localhost:2024"
+      LANGGRAPH_GRAPH_NAME: "data_analysis_agent"
+      # Force deterministic behaviour as much as possible
+      CHAT_NODE__temperature: "0"
+      # LLM configuration for LangGraph Server (expects these env vars)
+      CHAT_NODE__llm_model_provider: "openai"
+      CHAT_NODE__llm_model_name: "gpt-5-mini"
+      CHAT_NODE__base_url: "https://api.openai.com/v1"
+      CHAT_NODE__api_key: "${{ secrets.CHAT_NODE__api_key }}"
+
+      # LangChain, LangGraph,LangSmith
+      LANGCHAIN_API_KEY: "${{ secrets.LANGCHAIN_API_KEY }}"
+      LANGCHAIN_TRACING_V2: "${{ secrets.LANGCHAIN_TRACING_V2 }}"
+      LANGCHAIN_PROJECT: "${{ secrets.LANGCHAIN_PROJECT }}"
+      LANGGRAPH_ASSISTANT_ID: "${{ secrets.LANGGRAPH_ASSISTANT_ID }}"
+
+      # AWS
+      AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}"
+      AWS_SECRET_ACCESS_KEY: "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+      AWS_DEFAULT_REGION: "${{ secrets.AWS_DEFAULT_REGION }}"
+      AWS_S3_BUCKET: "${{ secrets.AWS_S3_BUCKET }}"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Need write permissions to commit eval_history.json back to main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies with uv (uses lockfile cache)
+        run: |
+          uv sync --frozen
+
+      - name: Start MCP server
+        run: |
+          nohup uv run python -m src.mcp_server > mcp.log 2>&1 &
+
+      - name: Wait for MCP server
+        run: |
+          uv run python scripts/wait_for_http.py "http://localhost:8082/health" --timeout 90 --interval 3
+
+      - name: Start LangGraph server
+        run: |
+          nohup uv run langgraph dev --config src/langgraph_server/langgraph.json > langgraph.log 2>&1 &
+
+      - name: Wait for LangGraph server
+        run: |
+          uv run python scripts/wait_for_http.py "${{ env.LANGGRAPH_SERVER_URL }}/docs" --timeout 120 --interval 3
+
+      - name: Run evaluation
+        run: |
+          uv run python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
+
+      - name: Update evaluation history (local file)
+        run: |
+          uv run python -m eval.update_history --report eval_report.json --history eval_history.json
+
+      - name: Generate evaluation history plot
+        if: always()
+        run: |
+          # Only generate plot if history file exists and has data
+          if [ -f eval_history.json ]; then
+            uv run python -m eval.plot_eval_history \
+              --history eval_history.json \
+              --out img/eval_history.png || echo "Plot generation failed (may be first run)"
+          else
+            echo "eval_history.json not found, skipping plot generation"
+          fi
+
+      - name: Commit eval_history.json to main branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add eval_history.json
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to eval_history.json to commit"
+          else
+            git commit -m "chore: update eval_history.json [skip ci]"
+            git push
+          fi
+
+      - name: Show evaluation report on failure
+        if: failure()
+        run: |
+          echo "===== EVAL REPORT ====="
+          if [ -f eval_report.json ]; then
+            cat eval_report.json
+          else
+            echo "eval_report.json not found"
+          fi
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          echo "===== MCP LOG ====="
+          (test -f mcp.log && sed -n '1,200p' mcp.log) || echo "mcp.log not found"
+          echo ""
+          echo "===== LANGGRAPH LOG ====="
+          (test -f langgraph.log && sed -n '1,200p' langgraph.log) || echo "langgraph.log not found"
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-artifacts
+          path: |
+            eval_report.json
+            eval_history.json
+            img/eval_history.png
+            mcp.log
+            langgraph.log
+

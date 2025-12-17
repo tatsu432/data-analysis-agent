@@ -13,6 +13,12 @@ import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
+from fastmcp import FastMCP
+from starlette.responses import JSONResponse
+
+from .servers.analysis.server import analysis_mcp
+from .servers.knowledge.infrastructure.knowledge_index_manager import ensure_index_built
+from .servers.knowledge.server import knowledge_mcp
 
 # Suppress plotly import warning from pandas (we use matplotlib, not plotly)
 warnings.filterwarnings(
@@ -21,25 +27,6 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-from fastmcp import FastMCP
-
-from .servers.analysis.server import analysis_mcp
-from .servers.knowledge.infrastructure.knowledge_index_manager import ensure_index_built
-from .servers.knowledge.server import knowledge_mcp
-
-# Conditionally import Confluence tools if credentials are available
-try:
-    from .servers.confluence.server import confluence_mcp
-
-    _confluence_available = True
-except (ImportError, ValueError) as e:
-    # Confluence tools unavailable if credentials are missing or library not installed
-    _confluence_available = False
-    confluence_mcp = None
-    logging.getLogger(__name__).warning(
-        f"Confluence tools not available: {e}. "
-        "Set CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN to enable."
-    )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,6 +41,78 @@ else:
 
 # Create main unified MCP server
 main_mcp = FastMCP("Data Analysis Agent MCP Server")
+
+
+def _create_confluence_stub_server() -> FastMCP:
+    """
+    Create a stub Confluence MCP server used when ENABLE_CONFLUENCE is not set.
+
+    The tools are registered under the same names as the real Confluence tools
+    but always return a deterministic "disabled" response instead of attempting
+    any external integration.
+    """
+    stub = FastMCP("Confluence Tools (disabled)")
+
+    @stub.tool()
+    def confluence_search_pages(
+        query: str,
+        space_key: str | None = None,
+        limit: int = 10,
+    ) -> dict:
+        return {
+            "error": "Confluence integration is disabled in this environment.",
+            "enabled": False,
+            "operation": "search_pages",
+            "query": query,
+            "space_key": space_key,
+            "limit": limit,
+        }
+
+    @stub.tool()
+    def confluence_get_page(page_id: str) -> dict:
+        return {
+            "error": "Confluence integration is disabled in this environment.",
+            "enabled": False,
+            "operation": "get_page",
+            "page_id": page_id,
+        }
+
+    @stub.tool()
+    def confluence_create_page(
+        space_key: str,
+        title: str,
+        body: str,
+        parent_id: str | None = None,
+    ) -> dict:
+        return {
+            "error": "Confluence integration is disabled in this environment.",
+            "enabled": False,
+            "operation": "create_page",
+            "space_key": space_key,
+            "title": title,
+            "parent_id": parent_id,
+        }
+
+    @stub.tool()
+    def confluence_update_page(
+        page_id: str,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> dict:
+        return {
+            "error": "Confluence integration is disabled in this environment.",
+            "enabled": False,
+            "operation": "update_page",
+            "page_id": page_id,
+        }
+
+    return stub
+
+
+@main_mcp.custom_route("/health", methods=["GET"])
+async def health_check(request) -> JSONResponse:  # type: ignore[override]
+    """HTTP health endpoint used by CI and external monitors."""
+    return JSONResponse({"status": "ok", "service": "mcp-server"})
 
 
 async def import_all_servers() -> None:
@@ -78,26 +137,52 @@ async def import_all_servers() -> None:
         logger.error(f"❌ Failed to import knowledge tools: {e}")
         raise
 
-    # Conditionally import Confluence tools if available
-    if _confluence_available and confluence_mcp:
-        try:
-            # Check if Confluence credentials are set
-            confluence_url = os.getenv("CONFLUENCE_URL")
-            confluence_username = os.getenv("CONFLUENCE_USERNAME")
-            confluence_api_token = os.getenv("CONFLUENCE_API_TOKEN")
+    # Confluence tools: either real or stub based on ENABLE_CONFLUENCE
+    enable_confluence = os.getenv("ENABLE_CONFLUENCE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
-            if all([confluence_url, confluence_username, confluence_api_token]):
-                await main_mcp.import_server(confluence_mcp, "confluence")
-                servers_imported.append("confluence")
-                logger.info("✅ Successfully imported Confluence tools")
-            else:
-                logger.warning(
-                    "⚠️  Confluence tools not imported: missing credentials. "
-                    "Set CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN to enable."
-                )
+    if not enable_confluence:
+        # Always register a stub server so calls fail deterministically in CI.
+        try:
+            stub_server = _create_confluence_stub_server()
+            await main_mcp.import_server(stub_server, "confluence")
+            servers_imported.append("confluence-stub")
+            logger.info(
+                "ℹ️  Confluence tools disabled (ENABLE_CONFLUENCE not set); using stub tools."
+            )
         except Exception as e:
-            logger.warning(f"⚠️  Failed to import Confluence tools: {e}")
-            # Don't raise - Confluence is optional
+            logger.warning(f"⚠️  Failed to import Confluence stub tools: {e}")
+    else:
+        # ENABLE_CONFLUENCE=true: require credentials and real tools; fail fast if misconfigured.
+        try:
+            from .servers.confluence.server import confluence_mcp
+        except Exception as e:
+            logger.error(
+                "❌ ENABLE_CONFLUENCE is true but Confluence server could not be imported: %s",
+                e,
+            )
+            raise
+
+        confluence_url = os.getenv("CONFLUENCE_URL")
+        confluence_username = os.getenv("CONFLUENCE_USERNAME")
+        confluence_api_token = os.getenv("CONFLUENCE_API_TOKEN")
+
+        if not all([confluence_url, confluence_username, confluence_api_token]):
+            raise RuntimeError(
+                "ENABLE_CONFLUENCE=true but Confluence credentials are missing. "
+                "Set CONFLUENCE_URL, CONFLUENCE_USERNAME, and CONFLUENCE_API_TOKEN."
+            )
+
+        try:
+            await main_mcp.import_server(confluence_mcp, "confluence")
+            servers_imported.append("confluence")
+            logger.info("✅ Successfully imported Confluence tools")
+        except Exception as e:
+            logger.error(f"❌ Failed to import Confluence tools: {e}")
+            raise
 
     logger.info(
         f"📦 Successfully configured unified MCP server with {len(servers_imported)} domain(s): {', '.join(servers_imported)}"
