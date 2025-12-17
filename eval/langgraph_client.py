@@ -19,9 +19,6 @@ import requests
 
 DEFAULT_SERVER_URL = os.getenv("LANGGRAPH_SERVER_URL", "http://localhost:2024")
 DEFAULT_GRAPH_NAME = os.getenv("LANGGRAPH_GRAPH_NAME", "data_analysis_agent")
-DEFAULT_ASSISTANT_ID = os.getenv(
-    "LANGGRAPH_ASSISTANT_ID", "c0cc005a-576b-4f63-9375-bf8ac46e15c7"
-)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -98,13 +95,16 @@ def _try_extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _get_or_create_assistant(
-    server_url: str, graph_name: str, assistant_id: Optional[str]
-) -> str:
-    """Get or create assistant for the graph, mirroring the Streamlit UI logic."""
-    if assistant_id:
-        return assistant_id
+def _get_or_create_assistant(server_url: str, graph_name: str) -> str:
+    """
+    Get or create an assistant for the given graph.
 
+    For evaluation we deliberately ignore any pre-configured assistant ID and
+    always work off the graph name. This avoids issues where a hard-coded
+    assistant ID (e.g. from local dev) is not known to the ephemeral LangGraph
+    server in CI.
+    """
+    # Try to fetch an existing assistant by graph_id (mirrors Streamlit UI logic)
     try:
         response = requests.get(
             f"{server_url}/assistants/{graph_name}",
@@ -116,6 +116,7 @@ def _get_or_create_assistant(
     except Exception:
         pass
 
+    # If none exists, create one
     try:
         response = requests.post(
             f"{server_url}/assistants",
@@ -128,6 +129,7 @@ def _get_or_create_assistant(
     except Exception:
         pass
 
+    # Fallback: use the graph name (LangGraph will error clearly if invalid)
     return graph_name
 
 
@@ -164,17 +166,6 @@ def _create_run(
     assistant_id: str,
 ) -> dict:
     """Create a run in LangGraph Server."""
-    # Verify assistant exists
-    try:
-        response = requests.get(
-            f"{server_url}/assistants/{assistant_id}",
-            timeout=5,
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"Assistant {assistant_id} not found")
-    except Exception as exc:
-        raise RuntimeError(f"Error checking assistant: {exc}") from exc
-
     # Import here to avoid circular imports
     from src.langgraph_server.graph import get_recursion_limit
 
@@ -287,9 +278,9 @@ def query_langgraph(
     """
     server_url = server_url or DEFAULT_SERVER_URL
     graph_name = graph_name or DEFAULT_GRAPH_NAME
-    assistant_id = _get_or_create_assistant(
-        server_url, graph_name, assistant_id or DEFAULT_ASSISTANT_ID
-    )
+    # For evaluation, always resolve assistant from the current graph name
+    # to avoid relying on any pre-existing assistant IDs.
+    resolved_assistant_id = _get_or_create_assistant(server_url, graph_name)
 
     # Use a deterministic thread ID per eval run unless caller overrides
     thread_id = thread_id or str(uuid.uuid4())
@@ -305,7 +296,7 @@ def query_langgraph(
         server_url,
         effective_thread_id,
         {"messages": [{"role": "human", "content": query}]},
-        assistant_id,
+        resolved_assistant_id,
     )
     run_id = run_data.get("run_id") or run_data.get("id")
     if not run_id:
