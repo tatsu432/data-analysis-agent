@@ -20,6 +20,10 @@ jobs:
       LANGGRAPH_GRAPH_NAME: "data_analysis_agent"
       # Force deterministic behaviour as much as possible
       CHAT_NODE__temperature: "0"
+      # LLM configuration for LangGraph Server (expects these env vars)
+      CHAT_NODE__llm_model_provider: "openai"
+      CHAT_NODE__llm_model_name: "gpt-5-mini"
+      CHAT_NODE__api_key: "${{ secrets.OPENAI_API_KEY }}"
 
     steps:
       - name: Checkout repository
@@ -53,6 +57,15 @@ jobs:
       - name: Run evaluation
         run: |
           uv run python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          echo "===== MCP LOG ====="
+          (test -f mcp.log && sed -n '1,200p' mcp.log) || echo "mcp.log not found"
+          echo ""
+          echo "===== LANGGRAPH LOG ====="
+          (test -f langgraph.log && sed -n '1,200p' langgraph.log) || echo "langgraph.log not found"
 
       - name: Upload evaluation artifacts
         if: always()
