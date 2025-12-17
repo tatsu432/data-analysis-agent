@@ -11,6 +11,8 @@ on:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to commit eval_history.json back to repo
 
     env:
       # Safe defaults for CI
@@ -41,6 +43,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Need write permissions to commit eval_history.json back to main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@v3
@@ -75,6 +81,32 @@ jobs:
         run: |
           uv run python -m eval.update_history --report eval_report.json --history eval_history.json
 
+      - name: Generate evaluation history plot
+        if: always()
+        run: |
+          # Only generate plot if history file exists and has data
+          if [ -f eval_history.json ]; then
+            uv run python -m eval.plot_eval_history \
+              --history eval_history.json \
+              --out img/eval_history.png || echo "Plot generation failed (may be first run)"
+          else
+            echo "eval_history.json not found, skipping plot generation"
+          fi
+
+      - name: Commit eval_history.json to main branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add eval_history.json
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to eval_history.json to commit"
+          else
+            git commit -m "chore: update eval_history.json [skip ci]"
+            git push
+          fi
+
       - name: Show evaluation report on failure
         if: failure()
         run: |
@@ -102,6 +134,7 @@ jobs:
           path: |
             eval_report.json
             eval_history.json
+            img/eval_history.png
             mcp.log
             langgraph.log
 
