@@ -1,0 +1,12 @@
+id: "plot-generation"
+query: >
+  Using the COVID-19 datasets you have access to, generate and save at least one
+  time-series plot as you would normally do. Then briefly summarize what the plot
+  shows in plain English.
+critical: false
+checks:
+  - type: contains
+    text: "plot"
+  - type: artifact_exists
+    glob: "img/plot_*.png"
+

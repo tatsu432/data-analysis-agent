@@ -1,0 +1,72 @@
+{
+  "metadata": {
+    "timestamp": "2025-12-17T08:53:34.515699+00:00",
+    "git_sha": "cade22aa96019999d8d623aa8a2a92c8ac51d5fa",
+    "fail_under": 0.85,
+    "cases_dir": "eval/cases"
+  },
+  "overall_score": 0.7777777777777778,
+  "pass": false,
+  "case_results": [
+    {
+      "id": "basic-capabilities",
+      "score": 0.3333333333333333,
+      "latency_seconds": 17.223703145980835,
+      "passed": false,
+      "critical": false,
+      "error": null,
+      "checks": [
+        {
+          "type": "contains",
+          "passed": true,
+          "message": "answer contains 'data'"
+        },
+        {
+          "type": "contains",
+          "passed": false,
+          "message": "answer missing 'analysis'"
+        },
+        {
+          "type": "regex",
+          "passed": false,
+          "message": "answer does not match regex '(COVID|covid|Corona)'"
+        }
+      ]
+    },
+    {
+      "id": "json-score",
+      "score": 1.0,
+      "latency_seconds": 12.489967107772827,
+      "passed": true,
+      "critical": true,
+      "error": null,
+      "checks": [
+        {
+          "type": "json_path_numeric_range",
+          "passed": true,
+          "message": "score=1.0 within [0.5, 1.0]"
+        }
+      ]
+    },
+    {
+      "id": "plot-generation",
+      "score": 1.0,
+      "latency_seconds": 77.11050415039062,
+      "passed": true,
+      "critical": false,
+      "error": null,
+      "checks": [
+        {
+          "type": "contains",
+          "passed": true,
+          "message": "answer contains 'plot'"
+        },
+        {
+          "type": "artifact_exists",
+          "passed": true,
+          "message": "found artifacts matching 'img/plot_*.png': ['img/plot_20251126_000642.png', 'img/plot_20251126_001337.png', 'img/plot_20251216_220302.png']"
+        }
+      ]
+    }
+  ]
+}

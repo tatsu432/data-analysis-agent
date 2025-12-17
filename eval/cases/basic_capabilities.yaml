@@ -1,0 +1,11 @@
+id: "basic-capabilities"
+query: "In one short paragraph, explain what the Data Analysis Agent can do."
+critical: false
+checks:
+  - type: contains
+    text: "data"
+  - type: contains
+    text: "analysis"
+  - type: regex
+    pattern: "(COVID|covid|Corona)"
+
