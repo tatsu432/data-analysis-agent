@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -27,6 +28,14 @@ import yaml
 from .langgraph_client import LangGraphResult, query_langgraph
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Basic logger configuration for CLI use; logs go to stdout and show up
+# directly in GitHub Actions logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("eval.run_eval")
 
 
 @dataclass
@@ -193,9 +202,11 @@ def run_case(case: dict) -> CaseResult:
     checks = case.get("checks") or []
     critical = bool(case.get("critical", False))
 
+    logger.info("Running case '%s'...", case_id)
     try:
         result = query_langgraph(case["query"])
     except Exception as exc:
+        logger.error("Case '%s' failed before checks: %s", case_id, exc)
         return CaseResult(
             id=case_id,
             score=0.0,
@@ -224,7 +235,7 @@ def run_case(case: dict) -> CaseResult:
             )
         )
 
-    return CaseResult(
+    case_result = CaseResult(
         id=case_id,
         score=score,
         latency_seconds=result.latency_seconds,
@@ -233,6 +244,15 @@ def run_case(case: dict) -> CaseResult:
         error=None,
         checks=check_results,
     )
+    logger.info(
+        "Case '%s' completed: score=%.2f, latency=%.2fs, passed=%s, critical=%s",
+        case_id,
+        case_result.score,
+        case_result.latency_seconds,
+        case_result.passed,
+        case_result.critical,
+    )
+    return case_result
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -267,7 +287,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     cases_dir = (PROJECT_ROOT / args.cases).resolve()
     out_path = (PROJECT_ROOT / args.out).resolve()
 
+    logger.info("Starting evaluation run")
+    logger.info("  cases_dir = %s", cases_dir)
+    logger.info("  out       = %s", out_path)
+    logger.info("  fail_under= %.3f", args.fail_under)
+
     raw_cases = _load_cases(cases_dir, max_cases=args.max_cases)
+    logger.info("Loaded %d cases", len(raw_cases))
 
     case_results: list[CaseResult] = []
     for case in raw_cases:
@@ -279,6 +305,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     any_critical_fail = any(c.critical and not c.passed for c in case_results)
     passed_threshold = overall_score >= float(args.fail_under)
     overall_pass = passed_threshold and not any_critical_fail
+
+    logger.info(
+        "Evaluation finished: overall_score=%.3f, pass=%s", overall_score, overall_pass
+    )
+    if any_critical_fail:
+        failed_ids = [c.id for c in case_results if c.critical and not c.passed]
+        logger.warning("Critical cases failed: %s", ", ".join(failed_ids))
 
     report: Dict[str, Any] = {
         "metadata": {

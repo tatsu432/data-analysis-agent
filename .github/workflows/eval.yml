@@ -53,7 +53,9 @@ jobs:
 
       - name: Install LangGraph CLI with in-memory API support
         run: |
-          uv pip install -U "langgraph-cli[inmem]"
+          # Install LangGraph CLI and force a recent langgraph-api to avoid
+          # known SSE bugs in older versions (e.g. 0.5.42).
+          uv pip install -U "langgraph-cli[inmem]" "langgraph-api>=0.6.5"
 
       - name: Start MCP server
         run: |
