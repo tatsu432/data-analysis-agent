@@ -154,6 +154,65 @@
           ]
         }
       ]
+    },
+    {
+      "timestamp": "2025-12-20T04:36:31.992751+00:00",
+      "git_sha": "b249056cda11ec2dd049893214edc46db40eafff",
+      "fail_under": 0.5,
+      "cases_dir": "eval/cases",
+      "overall_score": 0.75,
+      "pass": true,
+      "num_cases": 3,
+      "cases": [
+        {
+          "id": "basic-capabilities-with-metrics",
+          "score": 0.25,
+          "latency_seconds": 41.88096380233765,
+          "passed": false,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "quality_score",
+              "metric_type": "llm_judge",
+              "overall_score": 25.0,
+              "passed": false,
+              "num_criteria": 4
+            }
+          ]
+        },
+        {
+          "id": "patient-experience-survey-definition",
+          "score": 1.0,
+          "latency_seconds": 28.7794246673584,
+          "passed": true,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "patient-experience-survey-definition-score",
+              "metric_type": "llm_judge",
+              "overall_score": 100.0,
+              "passed": true,
+              "num_criteria": 1
+            }
+          ]
+        },
+        {
+          "id": "covid-case-summary",
+          "score": 1.0,
+          "latency_seconds": 73.37763166427612,
+          "passed": true,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "covid-case-summary-score",
+              "metric_type": "llm_judge",
+              "overall_score": 100.0,
+              "passed": true,
+              "num_criteria": 2
+            }
+          ]
+        }
+      ]
     }
   ]
 }
