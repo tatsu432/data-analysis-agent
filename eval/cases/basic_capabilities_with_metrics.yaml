@@ -1,0 +1,24 @@
+id: "basic-capabilities-with-metrics"
+query: "Explain what the Data Analysis Agent can do."
+critical: false
+
+# LLM-as-judge metrics for quality evaluation (checklist-based)
+metrics:
+  - type: llm_judge
+    name: "quality_score"
+    criteria:
+      - name: "medial datasets access"
+        description: "Does the response mention that the agent has access to the medical datasets?"
+        weight: 1.0
+      - name: "medical terms definition"
+        description: "Does the response mention that the agent can answer questions about the definition of the medical terms?"
+        weight: 1.0
+      - name: "confluence page access"
+        description: "Does the response mention that the agent can read and write some contents from and to the confluence page?"
+        weight: 1.0
+      - name: "data analysis and plot generation"
+        description: "Does the response mention that the agent can conduct data analysis and generate plots?"
+        weight: 1.0
+    threshold: 70.0  # Overall score from 0-100
+    model: "gpt-5-mini"  # Optional: defaults to EVAL_JUDGE_MODEL env var
+    provider: "openai"    # Optional: defaults to EVAL_JUDGE_PROVIDER env var

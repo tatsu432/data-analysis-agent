@@ -26,6 +26,8 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from .langgraph_client import LangGraphResult, query_langgraph
+from .metrics import create_metric
+from .schema import MetricResult
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -54,6 +56,7 @@ class CaseResult:
     critical: bool
     error: Optional[str]
     checks: List[CheckResult]
+    metrics: List[MetricResult]
 
 
 def _load_cases(cases_dir: Path, max_cases: Optional[int] = None) -> List[dict]:
@@ -200,11 +203,14 @@ def run_case(case: dict) -> CaseResult:
     """Run a single evaluation case."""
     case_id = case.get("id") or "<missing-id>"
     checks = case.get("checks") or []
+    metrics_config = case.get("metrics") or []
+    reference = case.get("reference")  # Optional reference answer
     critical = bool(case.get("critical", False))
+    query = case.get("query", "")
 
     logger.info("Running case '%s'...", case_id)
     try:
-        result = query_langgraph(case["query"])
+        result = query_langgraph(query)
     except Exception as exc:
         logger.error("Case '%s' failed before checks: %s", case_id, exc)
         return CaseResult(
@@ -215,25 +221,80 @@ def run_case(case: dict) -> CaseResult:
             critical=critical,
             error=str(exc),
             checks=[],
+            metrics=[],
         )
 
+    # Run checks (legacy support)
     check_results: list[CheckResult] = []
     for check in checks:
         check_results.append(_run_check(check, result))
 
+    # Run metrics (new extensible system)
+    metric_results: list[MetricResult] = []
+    for metric_config in metrics_config:
+        try:
+            metric = create_metric(metric_config)
+            metric_result = metric.evaluate(
+                query=query, result=result, reference=reference
+            )
+            metric_results.append(metric_result)
+            logger.debug(
+                "Metric '%s' for case '%s': overall_score=%.1f, passed=%s, criteria=%d",
+                metric_result.metric_name,
+                case_id,
+                metric_result.overall_score,
+                metric_result.passed,
+                len(metric_result.criterion_results),
+            )
+        except Exception as exc:
+            logger.error("Metric evaluation failed for case '%s': %s", case_id, exc)
+            # Create a failed MetricResult
+            metric_results.append(
+                MetricResult(
+                    metric_name=metric_config.get("name", "unknown"),
+                    metric_type=metric_config.get("type", "unknown"),
+                    overall_score=0.0,
+                    passed=False,
+                    criterion_results=[],
+                    error=str(exc),
+                )
+            )
+
+    # Calculate combined score
+    # If metrics are present, use weighted average: 70% metrics, 30% checks
+    # If only checks, use checks only
+    # If only metrics, use metrics only
+    # Note: Metrics use 0-100 scale, checks use 0-1 scale, so we normalize
+    check_score_normalized = 0.0  # 0-1 scale
+    metric_score_normalized = 0.0  # 0-1 scale (from 0-100)
+
     if check_results:
         passed_checks = sum(1 for c in check_results if c.passed)
-        score = passed_checks / len(check_results)
-    else:
-        # If no checks are defined, treat as neutral (score 1.0) but log a warning.
-        score = 1.0
+        check_score_normalized = passed_checks / len(check_results)
+    elif not metric_results:
+        # No checks and no metrics - treat as neutral
+        check_score_normalized = 1.0
         check_results.append(
             CheckResult(
                 type="meta",
                 passed=True,
-                message="no checks defined; case treated as passing by default",
+                message="no checks or metrics defined; case treated as passing by default",
             )
         )
+
+    if metric_results:
+        # Convert metric scores from 0-100 to 0-1 scale
+        metric_scores_0_1 = [m.overall_score / 100.0 for m in metric_results]
+        metric_score_normalized = sum(metric_scores_0_1) / len(metric_scores_0_1)
+
+    # Combine scores (both normalized to 0-1)
+    if check_results and metric_results:
+        # Weighted combination: 30% checks, 70% metrics
+        score = 0.3 * check_score_normalized + 0.7 * metric_score_normalized
+    elif metric_results:
+        score = metric_score_normalized
+    else:
+        score = check_score_normalized
 
     case_result = CaseResult(
         id=case_id,
@@ -243,11 +304,16 @@ def run_case(case: dict) -> CaseResult:
         critical=critical,
         error=None,
         checks=check_results,
+        metrics=metric_results,
     )
     logger.info(
-        "Case '%s' completed: score=%.2f, latency=%.2fs, passed=%s, critical=%s",
+        "Case '%s' completed: score=%.2f (checks=%.2f, metrics=%.1f%%), latency=%.2fs, passed=%s, critical=%s",
         case_id,
         case_result.score,
+        check_score_normalized,
+        sum(m.overall_score for m in metric_results) / len(metric_results)
+        if metric_results
+        else 0.0,
         case_result.latency_seconds,
         case_result.passed,
         case_result.critical,
@@ -333,6 +399,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "error": c.error,
                 },
                 "checks": [asdict(ch) for ch in c.checks],
+                "metrics": [
+                    {
+                        "metric_name": m.metric_name,
+                        "metric_type": m.metric_type,
+                        "overall_score": m.overall_score,
+                        "passed": m.passed,
+                        "criterion_results": [
+                            {
+                                "criterion_name": cr.criterion_name,
+                                "satisfaction_score": cr.satisfaction_score,
+                                "reasoning": cr.reasoning,
+                                "passed": cr.passed,
+                            }
+                            for cr in m.criterion_results
+                        ],
+                        "details": m.details,
+                        "error": m.error,
+                    }
+                    for m in c.metrics
+                ],
             }
             for c in case_results
         ],
