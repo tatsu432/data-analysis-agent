@@ -108,21 +108,27 @@ class LLMJudgeMetric(BaseMetric):
 
                 # Add API key based on provider
                 if self.config_model.provider == "openai":
-                    api_key = os.getenv("OPENAI_API_KEY")
+                    # Try OPENAI_API_KEY first, then fall back to CHAT_NODE__api_key
+                    api_key = os.getenv("OPENAI_API_KEY") or os.getenv(
+                        "CHAT_NODE__api_key"
+                    )
                     if api_key:
                         llm_params["api_key"] = api_key
                     else:
                         logger.warning(
-                            "OPENAI_API_KEY not found in environment. "
+                            "OPENAI_API_KEY or CHAT_NODE__api_key not found in environment. "
                             "LLM initialization may fail."
                         )
                 elif self.config_model.provider == "anthropic":
-                    api_key = os.getenv("ANTHROPIC_API_KEY")
+                    # Try ANTHROPIC_API_KEY first, then fall back to CHAT_NODE__api_key
+                    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv(
+                        "CHAT_NODE__api_key"
+                    )
                     if api_key:
                         llm_params["api_key"] = api_key
                     else:
                         logger.warning(
-                            "ANTHROPIC_API_KEY not found in environment. "
+                            "ANTHROPIC_API_KEY or CHAT_NODE__api_key not found in environment. "
                             "LLM initialization may fail."
                         )
 

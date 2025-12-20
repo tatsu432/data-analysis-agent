@@ -32,6 +32,21 @@ python -m eval.run_eval \
   --fail-under 0.85
 ```
 
+**Performance Options:**
+
+- `--max-workers N`: Run evaluations concurrently with N workers (default: auto-detected based on number of cases)
+- `--max-cases N`: Limit the number of cases to run (useful for testing)
+
+Example with concurrent execution:
+
+```bash
+python -m eval.run_eval \
+  --cases eval/cases \
+  --out eval_report.json \
+  --fail-under 0.85 \
+  --max-workers 8
+```
+
 The runner will:
 
 - Load YAML cases from `eval/cases/`

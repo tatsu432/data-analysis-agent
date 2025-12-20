@@ -17,6 +17,7 @@ import logging
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -347,6 +348,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help="Optional maximum number of cases to run.",
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum number of concurrent workers for parallel evaluation. "
+        "Defaults to min(32, num_cases + 4) for optimal performance.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -361,9 +369,68 @@ def main(argv: Optional[List[str]] = None) -> int:
     raw_cases = _load_cases(cases_dir, max_cases=args.max_cases)
     logger.info("Loaded %d cases", len(raw_cases))
 
+    # Determine number of workers for concurrent execution
+    if args.max_workers is not None:
+        max_workers = args.max_workers
+    else:
+        # Default: use min(32, num_cases + 4) for optimal performance
+        max_workers = min(32, len(raw_cases) + 4)
+
     case_results: list[CaseResult] = []
-    for case in raw_cases:
-        case_results.append(run_case(case))
+
+    if max_workers > 1 and len(raw_cases) > 1:
+        # Run cases concurrently
+        logger.info(
+            "Running %d cases with %d concurrent workers", len(raw_cases), max_workers
+        )
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all cases
+            future_to_case = {
+                executor.submit(run_case, case): case.get("id", "unknown")
+                for case in raw_cases
+            }
+
+            # Collect results as they complete (preserve order for reporting)
+            case_results_dict: Dict[str, CaseResult] = {}
+            completed = 0
+            for future in as_completed(future_to_case):
+                case_id = future_to_case[future]
+                try:
+                    result = future.result()
+                    case_results_dict[case_id] = result
+                    completed += 1
+                    logger.info(
+                        "Completed %d/%d cases: '%s' (score=%.2f, passed=%s)",
+                        completed,
+                        len(raw_cases),
+                        result.id,
+                        result.score,
+                        result.passed,
+                    )
+                except Exception as exc:
+                    case_id = future_to_case[future]
+                    logger.error("Case '%s' generated an exception: %s", case_id, exc)
+                    # Create a failed result
+                    case_results_dict[case_id] = CaseResult(
+                        id=case_id,
+                        score=0.0,
+                        latency_seconds=0.0,
+                        passed=False,
+                        critical=False,
+                        error=str(exc),
+                        checks=[],
+                        metrics=[],
+                    )
+
+            # Preserve original order of cases
+            case_results = [
+                case_results_dict[case.get("id", "unknown")] for case in raw_cases
+            ]
+    else:
+        # Run cases sequentially (for single case or max_workers=1)
+        logger.info("Running %d cases sequentially", len(raw_cases))
+        for case in raw_cases:
+            case_results.append(run_case(case))
 
     scores = [c.score for c in case_results]
     overall_score = mean(scores) if scores else 0.0
