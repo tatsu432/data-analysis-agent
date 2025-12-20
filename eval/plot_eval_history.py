@@ -100,10 +100,19 @@ def plot_comprehensive_evaluation(runs: List[RunSummary], out_path: Path) -> Non
             for metric in metrics:
                 metric_names.add(metric.get("metric_name", "unknown"))
 
-    # Calculate number of subplots: 1 (overall) + metrics + 1 (cases)
-    num_subplots = 1 + len(metric_names) + 1
-    if num_subplots < 2:
-        num_subplots = 2  # At least overall + cases
+    # Calculate number of subplots: 1 (overall) + metrics + 1 (cases if exists)
+    num_subplots = 1  # Overall score
+    if metric_names:
+        num_subplots += len(metric_names)
+    if case_ids:
+        num_subplots += 1  # Cases subplot
+    if num_subplots < 1:
+        num_subplots = 1  # At least overall score
+
+    # Determine common x-axis range from all runs
+    all_timestamps = [r.timestamp for r in runs]
+    x_min = min(all_timestamps) if all_timestamps else None
+    x_max = max(all_timestamps) if all_timestamps else None
 
     # Create figure with subplots
     fig = plt.figure(figsize=(16, 4 * num_subplots))
@@ -130,12 +139,16 @@ def plot_comprehensive_evaluation(runs: List[RunSummary], out_path: Path) -> Non
         xs, ys, c=colors, s=60, zorder=3, alpha=0.7, edgecolors="black", linewidth=1
     )
     ax_overall.set_ylim(0.0, 1.05)
+    if x_min and x_max:
+        ax_overall.set_xlim(x_min, x_max)
     ax_overall.set_ylabel("Overall Score (0-1)", fontsize=11, fontweight="bold")
     ax_overall.set_title(
         "Overall Evaluation Score Over Time", fontsize=12, fontweight="bold"
     )
     ax_overall.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-    ax_overall.legend(loc="best")
+    ax_overall.legend(loc="best", fontsize=10)
+    # Hide x-axis tick labels for this subplot (will show on last one)
+    ax_overall.tick_params(axis="x", labelbottom=False)
     subplot_idx += 1
 
     # 2. Individual metrics subplots
@@ -158,7 +171,7 @@ def plot_comprehensive_evaluation(runs: List[RunSummary], out_path: Path) -> Non
             if metric_name not in metric_data or not metric_data[metric_name]:
                 continue
 
-            ax_metric = fig.add_subplot(gs[subplot_idx, 0])
+            ax_metric = fig.add_subplot(gs[subplot_idx, 0], sharex=ax_overall)
             data_points = metric_data[metric_name]
             data_points.sort(key=lambda x: x[0])
             xs_metric = [dp[0] for dp in data_points]
@@ -173,18 +186,22 @@ def plot_comprehensive_evaluation(runs: List[RunSummary], out_path: Path) -> Non
                 label=metric_name,
                 color="tab:orange",
             )
-            ax_metric.set_ylabel("Score (0-100)", fontsize=10, fontweight="bold")
+            ax_metric.set_ylabel("Score (0-100)", fontsize=11, fontweight="bold")
             ax_metric.set_title(
-                f"Metric: {metric_name}", fontsize=11, fontweight="bold"
+                f"Metric: {metric_name}", fontsize=12, fontweight="bold"
             )
             ax_metric.set_ylim(0.0, 105.0)
+            if x_min and x_max:
+                ax_metric.set_xlim(x_min, x_max)
             ax_metric.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-            ax_metric.legend(loc="best")
+            ax_metric.legend(loc="best", fontsize=10)
+            # Hide x-axis tick labels for intermediate subplots (will show on last one)
+            ax_metric.tick_params(axis="x", labelbottom=False)
             subplot_idx += 1
 
     # 3. Individual case scores subplot
     if case_ids:
-        ax_cases = fig.add_subplot(gs[subplot_idx, 0])
+        ax_cases = fig.add_subplot(gs[subplot_idx, 0], sharex=ax_overall)
 
         # Organize data by case
         case_data: Dict[str, List[tuple[datetime, float]]] = {
@@ -222,12 +239,14 @@ def plot_comprehensive_evaluation(runs: List[RunSummary], out_path: Path) -> Non
             "Individual Case Scores Over Time", fontsize=12, fontweight="bold"
         )
         ax_cases.set_ylim(0.0, 1.05)
+        if x_min and x_max:
+            ax_cases.set_xlim(x_min, x_max)
         ax_cases.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-        ax_cases.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=9)
+        ax_cases.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=10)
+        # Show x-axis tick labels on the last subplot
+        ax_cases.tick_params(axis="x", labelbottom=True)
 
-    # Set x-axis label for the last subplot
-    if subplot_idx > 0:
-        fig.axes[-1].set_xlabel("Run timestamp (UTC)", fontsize=11, fontweight="bold")
+    # X-axis label is already set on the last subplot (cases), so we don't need to set it again
 
     plt.suptitle(
         "Comprehensive Evaluation History", fontsize=14, fontweight="bold", y=0.995

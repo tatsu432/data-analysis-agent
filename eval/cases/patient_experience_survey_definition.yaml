@@ -1,17 +1,14 @@
-id: "covid-case-summary"
-query: "2022年1月から2022年12月までの東京のコロナウイルス感染者数を図にして、要約して"
+id: "patient-experience-survey-definition"
+query: "患者経験調査とは何？"
 critical: false
 
 # LLM-as-judge metrics for quality evaluation (checklist-based)
 metrics:
   - type: llm_judge
-    name: "covid-case-summary-score"
+    name: "patient-experience-survey-definition-score"
     criteria:
-      - name: "time range coverage"
-        description: "Does the response focus only on the time range of 2022年1月から2022年12月まで?"
-        weight: 1.0
-      - name: "Location coverage"
-        description: "Does the response focus only on the location of Tokyo?"
+      - name: "patient-experience-survey-definition"
+        description: "Does the response mention that the agent knows that 患者経験調査とは患者に（主観的印象評価を求めるのではなく）受療中に遭遇した具体的事象，体験の有無を尋ねる調査である?"
         weight: 1.0
     threshold: 70.0  # Overall score from 0-100
     model: "gpt-5-mini"  # Optional: defaults to EVAL_JUDGE_MODEL env var

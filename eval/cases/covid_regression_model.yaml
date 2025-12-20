@@ -1,0 +1,24 @@
+id: "covid-regression-model"
+query: "Can you create a regression model where we predict the number of patient for LAGEVRIO by the MR activities? Tell me the fitted model and MAPE."
+critical: false
+
+# LLM-as-judge metrics for quality evaluation (checklist-based)
+metrics:
+  - type: llm_judge
+    name: "covid-regression-model-score"
+    criteria:
+      - name: "Correct Response in a Model"
+        description: "Does the response craete a model where the response is the number of patient for LAGEVRIO?"
+        weight: 1.0
+      - name: "Correct Predictor in a Model"
+        description: "Does the response craete a model where the predictor includes the MR activities?"
+        weight: 1.0
+      - name: "Fitted Model"
+        description: "Does the response tell me the fitted model?"
+        weight: 1.0
+      - name: "MAPE"
+        description: "Does the response tell me the MAPE?"
+        weight: 1.0
+    threshold: 70.0  # Overall score from 0-100
+    model: "gpt-5-mini"  # Optional: defaults to EVAL_JUDGE_MODEL env var
+    provider: "openai"    # Optional: defaults to EVAL_JUDGE_PROVIDER env var

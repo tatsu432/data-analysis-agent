@@ -1,0 +1,15 @@
+id: "chugai-definition"
+query: "開発シナジー効果とは？"
+critical: false
+
+# LLM-as-judge metrics for quality evaluation (checklist-based)
+metrics:
+  - type: llm_judge
+    name: "chugai-definition-score"
+    criteria:
+      - name: "chugai-definition"
+        description: "Does the response mention that the agent knows that 開発シナジー効果とは、新薬の開発プロセスにおいて、製薬各社のもつ研究開発結果、進捗中のデータやノウハウを共有することによって莫大な費用と時間を各社とも削減できる相乗効果をいいます。"
+        weight: 1.0
+    threshold: 70.0  # Overall score from 0-100
+    model: "gpt-5-mini"  # Optional: defaults to EVAL_JUDGE_MODEL env var
+    provider: "openai"    # Optional: defaults to EVAL_JUDGE_PROVIDER env var
