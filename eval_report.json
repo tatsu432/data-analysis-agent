@@ -1,17 +1,17 @@
 {
   "metadata": {
-    "timestamp": "2025-12-20T03:35:17.843269+00:00",
-    "git_sha": "fe905a9ecd842411ee05d53aae373d07ee2c68bc",
+    "timestamp": "2025-12-20T04:19:43.344679+00:00",
+    "git_sha": "0e0f57a70bca0d22a01183f1874310d878fee803",
     "fail_under": 0.5,
     "cases_dir": "eval/cases"
   },
-  "overall_score": 0.8,
+  "overall_score": 0.8166666666666667,
   "pass": true,
   "case_results": [
     {
       "id": "basic-capabilities-with-metrics",
-      "score": 0.4,
-      "latency_seconds": 82.01530170440674,
+      "score": 0.45,
+      "latency_seconds": 85.93150329589844,
       "passed": false,
       "critical": false,
       "error": null,
@@ -20,31 +20,31 @@
         {
           "metric_name": "quality_score",
           "metric_type": "llm_judge",
-          "overall_score": 40.0,
+          "overall_score": 45.0,
           "passed": false,
           "criterion_results": [
             {
               "criterion_name": "medial datasets access",
-              "satisfaction_score": 0.0,
-              "reasoning": "The response does not mention access to medical datasets specifically; it only references general data sources and PII/PHI handling but not medical dataset access.",
+              "satisfaction_score": 10.0,
+              "reasoning": "The response describes connecting to data sources generically but does not state access to medical datasets specifically.",
               "passed": false
             },
             {
               "criterion_name": "medical terms definition",
-              "satisfaction_score": 0.0,
-              "reasoning": "The response does not state that the agent can define or explain medical terms; it only refers generally to domain knowledge and PII/PHI policies.",
-              "passed": false
+              "satisfaction_score": 70.0,
+              "reasoning": "The agent attempted KB searches and a get_term_definition call (returned unrelated result), implying it can look up definitions, but it did not explicitly state it can define medical terms.",
+              "passed": true
             },
             {
               "criterion_name": "confluence page access",
-              "satisfaction_score": 60.0,
-              "reasoning": "The response explicitly mentions Confluence pages as sources to provide (and that the agent can search/index them with permission) and offers to create a KB entry for import, implying read capability but not clearly stating direct write/update access to Confluence.",
+              "satisfaction_score": 0.0,
+              "reasoning": "The response does not mention reading from or writing to Confluence pages.",
               "passed": false
             },
             {
               "criterion_name": "data analysis and plot generation",
               "satisfaction_score": 100.0,
-              "reasoning": "The response clearly describes data analysis capabilities and explicitly lists visualization and chart generation, examples, and deliverables including plots and notebooks.",
+              "reasoning": "The response explicitly lists EDA, visualization, chart types, dashboards, and reporting capabilities including generating plots.",
               "passed": true
             }
           ],
@@ -66,7 +66,7 @@
     {
       "id": "patient-experience-survey-definition",
       "score": 1.0,
-      "latency_seconds": 22.734373807907104,
+      "latency_seconds": 33.870628356933594,
       "passed": true,
       "critical": false,
       "error": null,
@@ -81,7 +81,7 @@
             {
               "criterion_name": "patient-experience-survey-definition",
               "satisfaction_score": 100.0,
-              "reasoning": "The response explicitly states that 患者経験調査 asks about concrete events and experiences encountered during care rather than subjective impression evaluations, directly matching the criterion.",
+              "reasoning": "回答は「受療者が医療で実際に経験した出来事やケアの過程」を系統的に把握する調査であり、「何が起きたか」「どのように扱われたか」を重視し、満足度ではなく事実に近い経験を測ると明記しているため、該当基準を完全に満たしている。",
               "passed": true
             }
           ],
@@ -100,7 +100,7 @@
     {
       "id": "covid-case-summary",
       "score": 1.0,
-      "latency_seconds": 79.24536871910095,
+      "latency_seconds": 94.4524438381195,
       "passed": true,
       "critical": false,
       "error": null,
@@ -115,13 +115,13 @@
             {
               "criterion_name": "time range coverage",
               "satisfaction_score": 100.0,
-              "reasoning": "The response explicitly covers 2022-01-01 to 2022-12-31 and provides annual, monthly, and daily summary statistics within that period.",
+              "reasoning": "The response explicitly analyzes data for 2022年1月〜2022年12月, provides totals, monthly ranks, and peak dates within that period.",
               "passed": true
             },
             {
               "criterion_name": "Location coverage",
               "satisfaction_score": 100.0,
-              "reasoning": "The response specifically states it is for 東京都 (Tokyo) and all reported figures and the described plot pertain to Tokyo.",
+              "reasoning": "The response explicitly states it analyzed '東京の新規COVID-19感染者数' and all reported figures and observations pertain to Tokyo.",
               "passed": true
             }
           ],
