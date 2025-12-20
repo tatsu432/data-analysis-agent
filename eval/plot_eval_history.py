@@ -25,6 +25,8 @@ import matplotlib.pyplot as plt
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+plt.style.use("ggplot")
+
 
 @dataclass
 class RunSummary:

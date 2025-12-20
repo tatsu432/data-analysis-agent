@@ -208,6 +208,48 @@ python -m src.langgraph_server "Show me COVID cases in Tokyo"
 
 ---
 
+## Evaluation & Metrics
+
+### Continuous Evaluation
+
+- **CI workflow**: Every push and pull request to `main` runs the `Agent Evaluation` GitHub Actions workflow, which:
+  - Generates a per-run report in `eval_report.json`
+  - Appends a summary of the run into `eval_history.json`
+  - Creates a plot of overall score over time at `img/eval_history.png`
+
+- **On PRs**:
+  - Go to the PR → **Checks** → **Agent Evaluation** → **Artifacts** → download `eval-artifacts`
+  - Inside the archive you'll find:
+    - `eval_report.json`: full details of the latest run
+    - `eval_history.json`: accumulated history across runs
+    - `img/eval_history.png`: plot of overall evaluation score over time
+
+- **On `main`**:
+  - On every push to `main`, the workflow commits the latest:
+    - `eval_report.json`
+    - `eval_history.json`
+    - `img/eval_history.png`
+  - You can open the current evaluation trend directly in the repo:
+
+    ![Evaluation History](img/eval_history.png)
+
+### Run Evaluation Locally
+
+- **Single run (writes `eval_report.json`)**:
+
+```bash
+uv run python -m eval.run_eval --cases eval/cases --out eval_report.json --fail-under 0.5
+```
+
+- **Append to history and regenerate plot**:
+
+```bash
+uv run python -m eval.update_history --report eval_report.json --history eval_history.json
+uv run python -m eval.plot_eval_history --history eval_history.json --out img/eval_history.png
+```
+
+---
+
 ## Available Tools
 
 ### Data Analysis Tools
