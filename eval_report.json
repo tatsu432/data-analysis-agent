@@ -1,17 +1,17 @@
 {
   "metadata": {
-    "timestamp": "2025-12-20T06:40:56.656274+00:00",
-    "git_sha": "bb77829038c22887f14e7f20d5f33dea2bb92663",
+    "timestamp": "2025-12-20T07:10:15.833721+00:00",
+    "git_sha": "107a826ad784c239acd2dc7b5a22f5b3ec80d662",
     "fail_under": 0.5,
     "cases_dir": "eval/cases"
   },
-  "overall_score": 0.9,
+  "overall_score": 0.69,
   "pass": true,
   "case_results": [
     {
       "id": "basic-capabilities-with-metrics",
-      "score": 0.5,
-      "latency_seconds": 32.642677307128906,
+      "score": 0.25,
+      "latency_seconds": 44.993860483169556,
       "passed": false,
       "critical": false,
       "error": null,
@@ -20,31 +20,31 @@
         {
           "metric_name": "quality_score",
           "metric_type": "llm_judge",
-          "overall_score": 50.0,
+          "overall_score": 25.0,
           "passed": false,
           "criterion_results": [
             {
               "criterion_name": "medial datasets access",
               "satisfaction_score": 0.0,
-              "reasoning": "The response explicitly states the agent does not have direct access to run code or query your datasets and does not claim access to medical datasets.",
+              "reasoning": "The response mentions general access to datasets but does not specifically mention access to medical datasets.",
               "passed": false
             },
             {
               "criterion_name": "medical terms definition",
-              "satisfaction_score": 100.0,
-              "reasoning": "The response explicitly says it can look up and explain domain term definitions and map terminology to dataset fields (use get_term_definition).",
-              "passed": true
+              "satisfaction_score": 0.0,
+              "reasoning": "The response does not state that the agent can define medical terms or answer questions about medical terminology.",
+              "passed": false
             },
             {
               "criterion_name": "confluence page access",
               "satisfaction_score": 0.0,
-              "reasoning": "The response does not mention reading from or writing to Confluence pages or similar collaborative docs.",
+              "reasoning": "The response does not mention reading from or writing to Confluence pages.",
               "passed": false
             },
             {
               "criterion_name": "data analysis and plot generation",
               "satisfaction_score": 100.0,
-              "reasoning": "The response lists data analysis capabilities including visualization (histograms, boxplots, scatter, time series, heatmaps) and modeling; it also offers code and instructions for generating plots.",
+              "reasoning": "The response explicitly lists exploratory data analysis, visualization and reporting, and creating charts and dashboards.",
               "passed": true
             }
           ],
@@ -66,7 +66,7 @@
     {
       "id": "chugai-definition",
       "score": 1.0,
-      "latency_seconds": 23.252308130264282,
+      "latency_seconds": 22.471174478530884,
       "passed": true,
       "critical": false,
       "error": null,
@@ -81,7 +81,7 @@
             {
               "criterion_name": "chugai-definition",
               "satisfaction_score": 100.0,
-              "reasoning": "The response explicitly defines 開発シナジー効果 as the sharing of R&D results, ongoing data, and know-how among pharmaceutical companies during new drug development to significantly reduce costs and time, matching the required definition.",
+              "reasoning": "応答は「新薬の開発プロセス」において複数組織が研究成果・進捗データ・ノウハウを共有することで費用・時間を削減する相乗効果であると明確に記述しており、基準の定義と完全に一致しているため満点とした。",
               "passed": true
             }
           ],
@@ -99,9 +99,9 @@
     },
     {
       "id": "covid-case-summary",
-      "score": 1.0,
-      "latency_seconds": 63.81705927848816,
-      "passed": true,
+      "score": 0.7,
+      "latency_seconds": 291.8367326259613,
+      "passed": false,
       "critical": false,
       "error": null,
       "checks": [],
@@ -109,19 +109,19 @@
         {
           "metric_name": "covid-case-summary-score",
           "metric_type": "llm_judge",
-          "overall_score": 100.0,
+          "overall_score": 70.0,
           "passed": true,
           "criterion_results": [
             {
               "criterion_name": "time range coverage",
-              "satisfaction_score": 100.0,
-              "reasoning": "The code explicitly filters dates between '2022-01-01' and '2022-12-31' and computes summaries and plots for that period only.",
-              "passed": true
+              "satisfaction_score": 40.0,
+              "reasoning": "The user requested Jan–Dec 2022, but the agent analyzed and plotted only Jan–Oct 2022 due to missing data for Nov–Dec. The response documents the limitation but does not cover the full requested time range.",
+              "passed": false
             },
             {
               "criterion_name": "Location coverage",
               "satisfaction_score": 100.0,
-              "reasoning": "The code selects the 'Tokyo' column and processes only that location for daily, rolling, and monthly summaries.",
+              "reasoning": "The analysis and figures explicitly focus on Tokyo (東京都) throughout.",
               "passed": true
             }
           ],
@@ -140,9 +140,9 @@
     },
     {
       "id": "covid-regression-model",
-      "score": 1.0,
-      "latency_seconds": 94.05712294578552,
-      "passed": true,
+      "score": 0.9,
+      "latency_seconds": 95.39888644218445,
+      "passed": false,
       "critical": false,
       "error": null,
       "checks": [],
@@ -150,31 +150,31 @@
         {
           "metric_name": "covid-regression-model-score",
           "metric_type": "llm_judge",
-          "overall_score": 100.0,
+          "overall_score": 90.0,
           "passed": true,
           "criterion_results": [
             {
               "criterion_name": "Correct Response in a Model",
               "satisfaction_score": 100.0,
-              "reasoning": "The agent explicitly states it fitted a linear regression predicting monthly LAGEVRIO patient counts and uses num_patients as the response variable.",
+              "reasoning": "The code explicitly filters patients to product_name == 'LAGEVRIO' and sets y = merged['num_patients'], so the model response variable is the number of LAGEVRIO patients.",
               "passed": true
             },
             {
               "criterion_name": "Correct Predictor in a Model",
               "satisfaction_score": 100.0,
-              "reasoning": "Predictors listed are MR activities (detailing, number of emails, number of seminars), which matches the requested predictor set.",
+              "reasoning": "The predictors used are the MR activity aggregates ['detailing', 'num_emails', 'num_seminars'], so MR activities are included as model predictors.",
               "passed": true
             },
             {
               "criterion_name": "Fitted Model",
-              "satisfaction_score": 100.0,
-              "reasoning": "The agent provides the fitted prediction equation and rounded coefficients for intercept and each predictor.",
+              "satisfaction_score": 80.0,
+              "reasoning": "A LinearRegression is fitted and the code builds a summary dict containing the intercept and coefficients which would be returned in result_df when executed. Score reduced because the response is code rather than presenting numeric coefficient values directly to the user, and behavior depends on having sufficient data (fallback if <4 rows).",
               "passed": true
             },
             {
               "criterion_name": "MAPE",
-              "satisfaction_score": 100.0,
-              "reasoning": "The agent reports MAPE explicitly (12.75%, later noted as ≈12.8%) and describes how it was computed.",
+              "satisfaction_score": 80.0,
+              "reasoning": "The code computes MAPE on the test set (excluding zero true values) and includes it in the returned summary. Score reduced because the numeric MAPE value is only produced when the code is run (and can be NaN if no nonzero test targets or too few rows), rather than being shown inline in the reply.",
               "passed": true
             }
           ],
@@ -195,9 +195,9 @@
     },
     {
       "id": "patient-experience-survey-definition",
-      "score": 1.0,
-      "latency_seconds": 29.171381950378418,
-      "passed": true,
+      "score": 0.6,
+      "latency_seconds": 30.952104330062866,
+      "passed": false,
       "critical": false,
       "error": null,
       "checks": [],
@@ -205,14 +205,14 @@
         {
           "metric_name": "patient-experience-survey-definition-score",
           "metric_type": "llm_judge",
-          "overall_score": 100.0,
-          "passed": true,
+          "overall_score": 60.0,
+          "passed": false,
           "criterion_results": [
             {
               "criterion_name": "patient-experience-survey-definition",
-              "satisfaction_score": 100.0,
-              "reasoning": "The response explicitly states that 患者経験調査 asks about specific events/experiences encountered during care and contrasts it with subjective satisfaction ratings, matching the criterion fully.",
-              "passed": true
+              "satisfaction_score": 60.0,
+              "reasoning": "The response describes collecting 'actual experiences' and lists concrete items (care received, symptom changes, side effects), which matches asking about specific events. However it also includes subjective measures (satisfaction, QOL) and does not explicitly state the distinction that the survey targets presence/absence of concrete events rather than subjective impressions, so the criterion is only partially satisfied.",
+              "passed": false
             }
           ],
           "details": {

@@ -208,6 +208,97 @@
           ]
         }
       ]
+    },
+    {
+      "timestamp": "2025-12-20T07:10:15.833721+00:00",
+      "git_sha": "107a826ad784c239acd2dc7b5a22f5b3ec80d662",
+      "fail_under": 0.5,
+      "cases_dir": "eval/cases",
+      "overall_score": 0.69,
+      "pass": true,
+      "num_cases": 5,
+      "cases": [
+        {
+          "id": "basic-capabilities-with-metrics",
+          "score": 0.25,
+          "latency_seconds": 44.993860483169556,
+          "passed": false,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "quality_score",
+              "metric_type": "llm_judge",
+              "overall_score": 25.0,
+              "passed": false,
+              "num_criteria": 4
+            }
+          ]
+        },
+        {
+          "id": "chugai-definition",
+          "score": 1.0,
+          "latency_seconds": 22.471174478530884,
+          "passed": true,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "chugai-definition-score",
+              "metric_type": "llm_judge",
+              "overall_score": 100.0,
+              "passed": true,
+              "num_criteria": 1
+            }
+          ]
+        },
+        {
+          "id": "covid-case-summary",
+          "score": 0.7,
+          "latency_seconds": 291.8367326259613,
+          "passed": false,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "covid-case-summary-score",
+              "metric_type": "llm_judge",
+              "overall_score": 70.0,
+              "passed": true,
+              "num_criteria": 2
+            }
+          ]
+        },
+        {
+          "id": "covid-regression-model",
+          "score": 0.9,
+          "latency_seconds": 95.39888644218445,
+          "passed": false,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "covid-regression-model-score",
+              "metric_type": "llm_judge",
+              "overall_score": 90.0,
+              "passed": true,
+              "num_criteria": 4
+            }
+          ]
+        },
+        {
+          "id": "patient-experience-survey-definition",
+          "score": 0.6,
+          "latency_seconds": 30.952104330062866,
+          "passed": false,
+          "critical": false,
+          "metrics": [
+            {
+              "metric_name": "patient-experience-survey-definition-score",
+              "metric_type": "llm_judge",
+              "overall_score": 60.0,
+              "passed": false,
+              "num_criteria": 1
+            }
+          ]
+        }
+      ]
     }
   ]
 }
