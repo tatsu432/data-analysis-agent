@@ -2,14 +2,14 @@
 Quick visualisation utilities for evaluation history.
 
 This script reads ``eval_history.json`` (produced by ``eval.update_history``)
-and generates simple plots to help you see whether the agent is improving
+and generates comprehensive plots to help you see whether the agent is improving
 over time.
 
 Usage (from project root):
 
     uv run python -m eval.plot_eval_history \
         --history eval_history.json \
-        --out img/eval_history.png
+        --out eval/img/eval_history.png
 """
 
 from __future__ import annotations
@@ -80,148 +80,164 @@ def _load_history(history_path: Path) -> List[RunSummary]:
     return runs
 
 
-def plot_overall_score(runs: List[RunSummary], out_path: Path) -> None:
-    if not runs:
-        raise ValueError("No runs found in history; nothing to plot.")
-
-    xs = [r.timestamp for r in runs]
-    ys = [r.overall_score for r in runs]
-    colors = ["tab:green" if r.passed else "tab:red" for r in runs]
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(xs, ys, color="tab:blue", linewidth=1.5, label="overall_score")
-    plt.scatter(xs, ys, c=colors, s=40, zorder=3, label="runs")
-    plt.ylim(0.0, 1.05)
-    plt.xlabel("Run timestamp (UTC)")
-    plt.ylabel("Overall score")
-    plt.title("Evaluation overall score over time")
-    plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path)
-    plt.close()
-
-
-def plot_metrics(runs: List[RunSummary], out_path: Path) -> None:
-    """Plot individual metric scores over time."""
+def plot_comprehensive_evaluation(runs: List[RunSummary], out_path: Path) -> None:
+    """
+    Generate a comprehensive figure with subplots showing:
+    1. Overall score over time
+    2. Each metric's trend over time
+    3. Individual case scores over time
+    """
     if not runs:
         raise ValueError("No runs found in history; nothing to plot.")
 
     # Collect all unique metric names across all runs
     metric_names: set[str] = set()
-    for run in runs:
-        for case in run.cases:
-            metrics = case.get("metrics", [])
-            for metric in metrics:
-                metric_names.add(metric.get("metric_name", "unknown"))
-
-    if not metric_names:
-        # No metrics to plot
-        return
-
-    # Organize data by metric
-    metric_data: Dict[str, List[tuple[datetime, float]]] = {
-        name: [] for name in sorted(metric_names)
-    }
-
-    for run in runs:
-        for case in run.cases:
-            metrics = case.get("metrics", [])
-            for metric in metrics:
-                metric_name = metric.get("metric_name", "unknown")
-                # Use overall_score (0-100) instead of score (0-1)
-                score = float(metric.get("overall_score", metric.get("score", 0.0)))
-                if metric_name in metric_data:
-                    metric_data[metric_name].append((run.timestamp, score))
-
-    # Create subplots for each metric
-    num_metrics = len(metric_data)
-    if num_metrics == 0:
-        return
-
-    fig, axes = plt.subplots(num_metrics, 1, figsize=(12, 4 * num_metrics), sharex=True)
-    if num_metrics == 1:
-        axes = [axes]
-
-    for idx, (metric_name, data_points) in enumerate(sorted(metric_data.items())):
-        if not data_points:
-            continue
-
-        ax = axes[idx]
-        data_points.sort(key=lambda x: x[0])  # Sort by timestamp
-        xs = [dp[0] for dp in data_points]
-        ys = [dp[1] for dp in data_points]
-
-        ax.plot(xs, ys, marker="o", linewidth=1.5, markersize=4, label=metric_name)
-        ax.set_ylabel("Score (0-100)")
-        ax.set_title(f"Metric: {metric_name}")
-        ax.set_ylim(0.0, 105.0)  # 0-100 scale for metric scores
-        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-        ax.legend()
-
-    axes[-1].set_xlabel("Run timestamp (UTC)")
-    plt.tight_layout()
-
-    # Save to a separate file for metrics
-    metrics_out_path = out_path.parent / f"{out_path.stem}_metrics{out_path.suffix}"
-    metrics_out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(metrics_out_path)
-    plt.close()
-
-
-def plot_case_scores(runs: List[RunSummary], out_path: Path) -> None:
-    """Plot individual case scores over time."""
-    if not runs:
-        raise ValueError("No runs found in history; nothing to plot.")
-
-    # Collect all unique case IDs
     case_ids: set[str] = set()
     for run in runs:
         for case in run.cases:
             case_ids.add(case.get("id", "unknown"))
+            metrics = case.get("metrics", [])
+            for metric in metrics:
+                metric_names.add(metric.get("metric_name", "unknown"))
 
-    if not case_ids:
-        return
+    # Calculate number of subplots: 1 (overall) + metrics + 1 (cases)
+    num_subplots = 1 + len(metric_names) + 1
+    if num_subplots < 2:
+        num_subplots = 2  # At least overall + cases
 
-    # Organize data by case
-    case_data: Dict[str, List[tuple[datetime, float]]] = {
-        case_id: [] for case_id in sorted(case_ids)
-    }
+    # Create figure with subplots
+    fig = plt.figure(figsize=(16, 4 * num_subplots))
+    gs = fig.add_gridspec(num_subplots, 1, hspace=0.3)
 
-    for run in runs:
-        for case in run.cases:
-            case_id = case.get("id", "unknown")
-            score = float(case.get("score", 0.0))
-            if case_id in case_data:
-                case_data[case_id].append((run.timestamp, score))
+    subplot_idx = 0
 
-    # Create plot
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # 1. Overall score subplot
+    ax_overall = fig.add_subplot(gs[subplot_idx, 0])
+    xs = [r.timestamp for r in runs]
+    ys = [r.overall_score for r in runs]
+    colors = ["tab:green" if r.passed else "tab:red" for r in runs]
 
-    for case_id, data_points in sorted(case_data.items()):
-        if not data_points:
-            continue
-        data_points.sort(key=lambda x: x[0])
-        xs = [dp[0] for dp in data_points]
-        ys = [dp[1] for dp in data_points]
-        ax.plot(xs, ys, marker="o", linewidth=1.5, markersize=4, label=case_id)
+    ax_overall.plot(
+        xs,
+        ys,
+        color="tab:blue",
+        linewidth=2,
+        label="Overall Score",
+        marker="o",
+        markersize=6,
+    )
+    ax_overall.scatter(
+        xs, ys, c=colors, s=60, zorder=3, alpha=0.7, edgecolors="black", linewidth=1
+    )
+    ax_overall.set_ylim(0.0, 1.05)
+    ax_overall.set_ylabel("Overall Score (0-1)", fontsize=11, fontweight="bold")
+    ax_overall.set_title(
+        "Overall Evaluation Score Over Time", fontsize=12, fontweight="bold"
+    )
+    ax_overall.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
+    ax_overall.legend(loc="best")
+    subplot_idx += 1
 
-    ax.set_xlabel("Run timestamp (UTC)")
-    ax.set_ylabel("Case Score")
-    ax.set_title("Individual Case Scores Over Time")
-    ax.set_ylim(0.0, 1.05)
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    # 2. Individual metrics subplots
+    if metric_names:
+        # Organize data by metric
+        metric_data: Dict[str, List[tuple[datetime, float]]] = {
+            name: [] for name in sorted(metric_names)
+        }
 
-    plt.tight_layout()
+        for run in runs:
+            for case in run.cases:
+                metrics = case.get("metrics", [])
+                for metric in metrics:
+                    metric_name = metric.get("metric_name", "unknown")
+                    score = float(metric.get("overall_score", metric.get("score", 0.0)))
+                    if metric_name in metric_data:
+                        metric_data[metric_name].append((run.timestamp, score))
 
-    # Save to a separate file for cases
-    cases_out_path = out_path.parent / f"{out_path.stem}_cases{out_path.suffix}"
-    cases_out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(cases_out_path)
+        for metric_name in sorted(metric_names):
+            if metric_name not in metric_data or not metric_data[metric_name]:
+                continue
+
+            ax_metric = fig.add_subplot(gs[subplot_idx, 0])
+            data_points = metric_data[metric_name]
+            data_points.sort(key=lambda x: x[0])
+            xs_metric = [dp[0] for dp in data_points]
+            ys_metric = [dp[1] for dp in data_points]
+
+            ax_metric.plot(
+                xs_metric,
+                ys_metric,
+                marker="o",
+                linewidth=2,
+                markersize=5,
+                label=metric_name,
+                color="tab:orange",
+            )
+            ax_metric.set_ylabel("Score (0-100)", fontsize=10, fontweight="bold")
+            ax_metric.set_title(
+                f"Metric: {metric_name}", fontsize=11, fontweight="bold"
+            )
+            ax_metric.set_ylim(0.0, 105.0)
+            ax_metric.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
+            ax_metric.legend(loc="best")
+            subplot_idx += 1
+
+    # 3. Individual case scores subplot
+    if case_ids:
+        ax_cases = fig.add_subplot(gs[subplot_idx, 0])
+
+        # Organize data by case
+        case_data: Dict[str, List[tuple[datetime, float]]] = {
+            case_id: [] for case_id in sorted(case_ids)
+        }
+
+        for run in runs:
+            for case in run.cases:
+                case_id = case.get("id", "unknown")
+                score = float(case.get("score", 0.0))
+                if case_id in case_data:
+                    case_data[case_id].append((run.timestamp, score))
+
+        # Plot each case with different colors
+        colors_list = plt.cm.tab10(range(len(case_data)))
+        for idx, (case_id, data_points) in enumerate(sorted(case_data.items())):
+            if not data_points:
+                continue
+            data_points.sort(key=lambda x: x[0])
+            xs_case = [dp[0] for dp in data_points]
+            ys_case = [dp[1] for dp in data_points]
+            ax_cases.plot(
+                xs_case,
+                ys_case,
+                marker="o",
+                linewidth=1.5,
+                markersize=4,
+                label=case_id,
+                color=colors_list[idx % len(colors_list)],
+            )
+
+        ax_cases.set_xlabel("Run timestamp (UTC)", fontsize=11, fontweight="bold")
+        ax_cases.set_ylabel("Case Score (0-1)", fontsize=11, fontweight="bold")
+        ax_cases.set_title(
+            "Individual Case Scores Over Time", fontsize=12, fontweight="bold"
+        )
+        ax_cases.set_ylim(0.0, 1.05)
+        ax_cases.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
+        ax_cases.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=9)
+
+    # Set x-axis label for the last subplot
+    if subplot_idx > 0:
+        fig.axes[-1].set_xlabel("Run timestamp (UTC)", fontsize=11, fontweight="bold")
+
+    plt.suptitle(
+        "Comprehensive Evaluation History", fontsize=14, fontweight="bold", y=0.995
+    )
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close()
+    logger.info(f"Comprehensive evaluation plot saved to {out_path}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -235,8 +251,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--out",
         type=str,
-        default="img/eval_history.png",
-        help="Output image path for the plot (default: img/eval_history.png).",
+        default="eval/img/eval_history.png",
+        help="Output image path for the plot (default: eval/img/eval_history.png).",
     )
 
     args = parser.parse_args(argv)
@@ -250,21 +266,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     runs = _load_history(history_path)
-    plot_overall_score(runs, out_path)
 
-    # Plot metrics if available
+    # Generate comprehensive plot with all subplots
     try:
-        plot_metrics(runs, out_path)
-        logger.info("Metrics plot generated")
+        plot_comprehensive_evaluation(runs, out_path)
+        logger.info("Comprehensive evaluation plot generated successfully")
     except Exception as e:
-        logger.warning(f"Could not generate metrics plot: {e}")
-
-    # Plot individual case scores
-    try:
-        plot_case_scores(runs, out_path)
-        logger.info("Case scores plot generated")
-    except Exception as e:
-        logger.warning(f"Could not generate case scores plot: {e}")
+        logger.error(f"Failed to generate comprehensive plot: {e}", exc_info=True)
+        raise
 
     return 0
 

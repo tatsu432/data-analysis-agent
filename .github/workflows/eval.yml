@@ -93,7 +93,7 @@ jobs:
           if [ -f eval_history.json ]; then
             uv run python -m eval.plot_eval_history \
               --history eval_history.json \
-              --out img/eval_history.png || echo "Plot generation failed (may be first run)"
+              --out eval/img/eval_history.png || echo "Plot generation failed (may be first run)"
           else
             echo "eval_history.json not found, skipping plot generation"
           fi
@@ -106,8 +106,8 @@ jobs:
           # Always stage the latest single-run report and aggregated history
           git add eval_report.json eval_history.json
           # Also commit the latest plot if it exists (explicitly allowed in .gitignore)
-          if [ -f img/eval_history.png ]; then
-            git add img/eval_history.png
+          if [ -f eval/img/eval_history.png ]; then
+            git add eval/img/eval_history.png
           fi
           # Only commit if there are changes
           if git diff --staged --quiet; then
@@ -144,7 +144,7 @@ jobs:
           path: |
             eval_report.json
             eval_history.json
-            img/eval_history.png
+            eval/img/eval_history.png
             mcp.log
             langgraph.log
 

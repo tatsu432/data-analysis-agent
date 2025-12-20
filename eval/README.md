@@ -141,13 +141,15 @@ python -m eval.update_history --report eval_report.json --history eval_history.j
 Then visualize trends:
 
 ```bash
-python -m eval.plot_eval_history --history eval_history.json --out img/eval_history.png
+python -m eval.plot_eval_history --history eval_history.json --out eval/img/eval_history.png
 ```
 
-This generates:
-- `eval_history.png` - Overall score over time
-- `eval_history_metrics.png` - Individual metric trends
-- `eval_history_cases.png` - Individual case scores
+This generates a comprehensive figure (`eval/img/eval_history.png`) with subplots showing:
+- **Overall score** over time (with pass/fail indicators)
+- **Each metric's trend** over time (0-100 scale)
+- **Individual case scores** over time (all cases in one plot)
+
+All plots are combined into a single comprehensive figure, making it easy to see improvements across all metrics and cases at a glance.
 
 #### Adding Custom Metrics (Advanced)
 

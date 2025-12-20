@@ -58,7 +58,7 @@ data/kaggle_covid/*
 !high-level-architecture-data-analysis-agent.png
 !current_architecture.png
 # exception for evaluation history plot
-!img/eval_history.png
+!eval/img/eval_history.png
 
 
 # LangGraph API
