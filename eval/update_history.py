@@ -40,15 +40,27 @@ def _summarise_run(report: Dict[str, Any]) -> Dict[str, Any]:
 
     summary_cases: List[Dict[str, Any]] = []
     for c in case_results:
-        summary_cases.append(
-            {
-                "id": c.get("id"),
-                "score": c.get("score"),
-                "latency_seconds": c.get("latency_seconds"),
-                "passed": c.get("passed"),
-                "critical": c.get("critical"),
-            }
-        )
+        case_summary = {
+            "id": c.get("id"),
+            "score": c.get("score"),
+            "latency_seconds": c.get("latency_seconds"),
+            "passed": c.get("passed"),
+            "critical": c.get("critical"),
+        }
+        # Include metrics if present
+        metrics = c.get("metrics", [])
+        if metrics:
+            case_summary["metrics"] = [
+                {
+                    "metric_name": m.get("metric_name"),
+                    "metric_type": m.get("metric_type"),
+                    "overall_score": m.get("overall_score"),
+                    "passed": m.get("passed"),
+                    "num_criteria": len(m.get("criterion_results", [])),
+                }
+                for m in metrics
+            ]
+        summary_cases.append(case_summary)
 
     return {
         "timestamp": metadata.get("timestamp"),

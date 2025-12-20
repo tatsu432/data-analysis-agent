@@ -1,60 +1,140 @@
 {
   "metadata": {
-    "timestamp": "2025-12-20T02:16:59.315285+00:00",
-    "git_sha": "d51cd0ad7b33a157f8f41d7eeda5b6f8dffb9f30",
+    "timestamp": "2025-12-20T03:35:17.843269+00:00",
+    "git_sha": "fe905a9ecd842411ee05d53aae373d07ee2c68bc",
     "fail_under": 0.5,
     "cases_dir": "eval/cases"
   },
-  "overall_score": 0.6666666666666666,
+  "overall_score": 0.8,
   "pass": true,
   "case_results": [
     {
-      "id": "basic-capabilities",
-      "score": 1.0,
-      "latency_seconds": 20.074312686920166,
-      "passed": true,
-      "critical": false,
-      "error": null,
-      "checks": [
-        {
-          "type": "contains",
-          "passed": true,
-          "message": "answer contains 'data'"
-        }
-      ]
-    },
-    {
-      "id": "json-score",
-      "score": 1.0,
-      "latency_seconds": 14.504122734069824,
-      "passed": true,
-      "critical": true,
-      "error": null,
-      "checks": [
-        {
-          "type": "json_path_numeric_range",
-          "passed": true,
-          "message": "score=1.0 within [0.5, 1.0]"
-        }
-      ]
-    },
-    {
-      "id": "plot-generation",
-      "score": 0.0,
-      "latency_seconds": 9.585160970687866,
+      "id": "basic-capabilities-with-metrics",
+      "score": 0.4,
+      "latency_seconds": 82.01530170440674,
       "passed": false,
       "critical": false,
       "error": null,
-      "checks": [
+      "checks": [],
+      "metrics": [
         {
-          "type": "contains",
+          "metric_name": "quality_score",
+          "metric_type": "llm_judge",
+          "overall_score": 40.0,
           "passed": false,
-          "message": "answer missing 'plot'"
-        },
+          "criterion_results": [
+            {
+              "criterion_name": "medial datasets access",
+              "satisfaction_score": 0.0,
+              "reasoning": "The response does not mention access to medical datasets specifically; it only references general data sources and PII/PHI handling but not medical dataset access.",
+              "passed": false
+            },
+            {
+              "criterion_name": "medical terms definition",
+              "satisfaction_score": 0.0,
+              "reasoning": "The response does not state that the agent can define or explain medical terms; it only refers generally to domain knowledge and PII/PHI policies.",
+              "passed": false
+            },
+            {
+              "criterion_name": "confluence page access",
+              "satisfaction_score": 60.0,
+              "reasoning": "The response explicitly mentions Confluence pages as sources to provide (and that the agent can search/index them with permission) and offers to create a KB entry for import, implying read capability but not clearly stating direct write/update access to Confluence.",
+              "passed": false
+            },
+            {
+              "criterion_name": "data analysis and plot generation",
+              "satisfaction_score": 100.0,
+              "reasoning": "The response clearly describes data analysis capabilities and explicitly lists visualization and chart generation, examples, and deliverables including plots and notebooks.",
+              "passed": true
+            }
+          ],
+          "details": {
+            "judge_model": "gpt-5-mini",
+            "judge_provider": "openai",
+            "criterion_weights": {
+              "medial datasets access": 1.0,
+              "medical terms definition": 1.0,
+              "confluence page access": 1.0,
+              "data analysis and plot generation": 1.0
+            },
+            "num_criteria": 4
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "patient-experience-survey-definition",
+      "score": 1.0,
+      "latency_seconds": 22.734373807907104,
+      "passed": true,
+      "critical": false,
+      "error": null,
+      "checks": [],
+      "metrics": [
         {
-          "type": "artifact_exists",
-          "passed": false,
-          "message": "no artifacts matching 'img/plot_*.png'"
+          "metric_name": "patient-experience-survey-definition-score",
+          "metric_type": "llm_judge",
+          "overall_score": 100.0,
+          "passed": true,
+          "criterion_results": [
+            {
+              "criterion_name": "patient-experience-survey-definition",
+              "satisfaction_score": 100.0,
+              "reasoning": "The response explicitly states that 患者経験調査 asks about concrete events and experiences encountered during care rather than subjective impression evaluations, directly matching the criterion.",
+              "passed": true
+            }
+          ],
+          "details": {
+            "judge_model": "gpt-5-mini",
+            "judge_provider": "openai",
+            "criterion_weights": {
+              "patient-experience-survey-definition": 1.0
+            },
+            "num_criteria": 1
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "id": "covid-case-summary",
+      "score": 1.0,
+      "latency_seconds": 79.24536871910095,
+      "passed": true,
+      "critical": false,
+      "error": null,
+      "checks": [],
+      "metrics": [
+        {
+          "metric_name": "covid-case-summary-score",
+          "metric_type": "llm_judge",
+          "overall_score": 100.0,
+          "passed": true,
+          "criterion_results": [
+            {
+              "criterion_name": "time range coverage",
+              "satisfaction_score": 100.0,
+              "reasoning": "The response explicitly covers 2022-01-01 to 2022-12-31 and provides annual, monthly, and daily summary statistics within that period.",
+              "passed": true
+            },
+            {
+              "criterion_name": "Location coverage",
+              "satisfaction_score": 100.0,
+              "reasoning": "The response specifically states it is for 東京都 (Tokyo) and all reported figures and the described plot pertain to Tokyo.",
+              "passed": true
+            }
+          ],
+          "details": {
+            "judge_model": "gpt-5-mini",
+            "judge_provider": "openai",
+            "criterion_weights": {
+              "time range coverage": 1.0,
+              "Location coverage": 1.0
+            },
+            "num_criteria": 2
+          },
+          "error": null
         }
       ]
     }
